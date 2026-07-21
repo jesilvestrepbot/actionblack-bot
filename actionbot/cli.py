@@ -19,28 +19,52 @@ from .notify import configurar_logging, notificar
 
 log = logging.getLogger("actionbot")
 
-ESTADO_PATH = Path("logs/estado.json")
+DIAS_NOMBRES = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+
+# Respaldo local de reservas logradas por el bot. El endpoint de bookings
+# a veces responde total_items > 0 con items vacios y no se puede confiar
+# solo en el para saber si un dia ya quedo cubierto.
+BOT_RESERVAS = Path("logs/bot_reservas.json")
 
 
-def cargar_estado() -> dict:
+def cargar_bot_reservas() -> dict:
     try:
-        estado = json.loads(ESTADO_PATH.read_text(encoding="utf-8"))
+        datos = json.loads(BOT_RESERVAS.read_text(encoding="utf-8"))
     except Exception:
         return {}
-    limite = datetime.now() - timedelta(days=15)
-    vigente = {}
-    for k, v in estado.items():
+    limite = (datetime.now() - timedelta(days=15)).date().isoformat()
+    return {f: v for f, v in datos.items() if f >= limite}
+
+
+def guardar_bot_reservas(datos: dict) -> None:
+    BOT_RESERVAS.parent.mkdir(exist_ok=True)
+    BOT_RESERVAS.write_text(json.dumps(datos, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def registrar_bot_reserva(fecha: str, activity: dict) -> None:
+    datos = cargar_bot_reservas()
+    datos[fecha] = {"clase": _nombre(activity), "ts": datetime.now().isoformat()}
+    guardar_bot_reservas(datos)
+
+
+def _bookings_items(bookings) -> list:
+    if isinstance(bookings, dict):
+        return bookings.get("items") or bookings.get("bookings") or []
+    return bookings or []
+
+
+def _bookings_saludable(bookings) -> bool:
+    """El endpoint a veces responde total_items > 0 con items vacios.
+    En ese estado no sirve para decidir si un dia esta cubierto."""
+    items = _bookings_items(bookings)
+    if items:
+        return True
+    if isinstance(bookings, dict):
         try:
-            if datetime.fromisoformat(v.get("ts")) >= limite:
-                vigente[k] = v
-        except Exception:
-            continue
-    return vigente
-
-
-def guardar_estado(estado: dict) -> None:
-    ESTADO_PATH.parent.mkdir(exist_ok=True)
-    ESTADO_PATH.write_text(json.dumps(estado, indent=2, ensure_ascii=False), encoding="utf-8")
+            return int(bookings.get("total_items") or 0) == 0
+        except (TypeError, ValueError):
+            return False
+    return False
 
 
 def _branch(session: requests.Session, cfg: Config) -> dict:
@@ -80,25 +104,86 @@ def cmd_calendario(args) -> None:
         print(f"{s[:10]} {s[11:16]}  {a['activity_name']:10} cupos {a['occupation']:>2}/{a['capacity']:<2} {a['status_name']}")
 
 
+def cmd_horarios(args) -> None:
+    """Mapa semanal de horarios por clase, con las clases del plan marcadas."""
+    cfg = cargar(args.config)
+    session = api.new_session()
+    branch = _branch(session, cfg)
+    acts = scheduler.calendario_dos_semanas(session, branch)
+    plan = cfg.plan
+
+    mapa: dict[int, dict[str, set]] = {}
+    for a in acts:
+        wd = scheduler.parse_start(a).weekday()
+        nombre = a["activity_name"].strip().upper()
+        mapa.setdefault(wd, {}).setdefault(nombre, set()).add(a["start_time"][11:16])
+
+    print(f"Horarios de {branch['name']} segun las proximas dos semanas. * = objetivo del plan")
+    for wd in sorted(mapa):
+        print(f"\n{DIAS_NOMBRES[wd]}")
+        for clase in sorted(mapa[wd]):
+            marcas = []
+            for h in sorted(mapa[wd][clase]):
+                es_plan = (clase in plan.prioridad
+                           and wd in plan.dias
+                           and plan.entre[0] <= h <= plan.entre[1])
+                marcas.append(h + ("*" if es_plan else ""))
+            print(f"  {clase:10} {' '.join(marcas)}")
+
+    print("\nAperturas del plan: el bot dispara a la misma hora del dia anterior")
+    for wd in sorted(mapa):
+        if wd not in plan.dias:
+            continue
+        for clase in plan.prioridad:
+            horas = sorted(h for h in mapa[wd].get(clase, set())
+                           if plan.entre[0] <= h <= plan.entre[1])
+            if horas:
+                previo = DIAS_NOMBRES[(wd - 1) % 7]
+                print(f"  {DIAS_NOMBRES[wd]:10} {clase:8} {horas[0]}  ->  disparo el {previo} a las {horas[0]}")
+                break
+
+
+def _cubierto_str(reserva: dict) -> str:
+    return f"{reserva.get('activity_name')} {str(reserva.get('start_time'))[11:16]} (spot {reserva.get('spot_number') or '?'})"
+
+
 def cmd_plan(args) -> None:
     cfg = cargar(args.config)
     session = api.new_session()
     branch = _branch(session, cfg)
     tz = ZoneInfo(branch["timezone"])
-    targets = scheduler.objetivos_de_la_agenda(scheduler.calendario_dos_semanas(session, branch), cfg)
-    if not targets:
-        print("Ningun objetivo coincide con el calendario actual, revisa config.yaml")
+    por_fecha = scheduler.candidatos_por_dia(scheduler.calendario_dos_semanas(session, branch), cfg)
+    if not por_fecha:
+        print("Ningun dia del plan tiene clases candidatas, revisa config.yaml")
         return
+
+    bookings = None
+    if cfg.email and cfg.password:
+        try:
+            token, _ = api.login(session, cfg.email, cfg.password, branch)
+            bookings = api.my_bookings(session, token)
+        except Exception as e:
+            print(f"(no pude consultar tus reservas: {e})")
+
     ahora = datetime.now(timezone.utc)
-    print(f"Objetivos detectados en {branch['name']} (apertura {cfg.apertura_horas:g} h antes):")
-    for t in targets:
-        a = t["activity"]
-        abre = t["open_at"]
-        if abre <= ahora:
-            estado = "apertura ya pasada"
-        else:
-            estado = f"abre {abre.astimezone(tz):%Y-%m-%d %H:%M:%S}"
-        print(f"  {_nombre(a):32} cupos {a['occupation']:>2}/{a['capacity']:<2} {estado}")
+    print(f"Plan en {branch['name']}: una clase por dia, prioridad {' > '.join(cfg.plan.prioridad)}, franja {cfg.plan.entre[0]} a {cfg.plan.entre[1]}")
+    for fecha in sorted(por_fecha):
+        cands = [c for c in por_fecha[fecha] if scheduler.parse_start(c) > ahora]
+        if not cands:
+            continue
+        reserva = scheduler.dia_cubierto(bookings, fecha) if bookings else None
+        print(f"\n{fecha} ({DIAS_NOMBRES[scheduler.parse_start(cands[0]).weekday()]})")
+        if reserva:
+            print(f"  cubierto: ya tienes {_cubierto_str(reserva)}")
+            continue
+        for i, c in enumerate(cands):
+            ap = scheduler.apertura_de(c, cfg)
+            if ap <= ahora:
+                cuando = "ventana abierta, entra al rescate"
+            else:
+                cuando = f"abre {ap.astimezone(tz):%Y-%m-%d %H:%M:%S}"
+            rol = "principal" if i == 0 else "fallback"
+            print(f"  {rol:9} {c['activity_name']:8} {c['start_time'][11:16]}  cupos {c['occupation']:>2}/{c['capacity']:<2} {c['status_name']:9} {cuando}")
 
 
 def cmd_login_test(args) -> None:
@@ -126,12 +211,10 @@ def cmd_reservas(args) -> None:
 
 def ejecutar_reserva(session: requests.Session, token: str, activity: dict, branch: dict,
                      cfg: Config, esperar_apertura: bool, ventana_seg: float | None = None) -> bool:
-    start = scheduler.parse_start(activity)
-    open_at = start - timedelta(hours=cfg.apertura_horas)
-    offset = scheduler.clock_offset(session)
-    log.info("Offset del reloj frente al servidor: %+.1f s", offset.total_seconds())
-
     if esperar_apertura:
+        open_at = scheduler.apertura_de(activity, cfg)
+        offset = scheduler.clock_offset(session)
+        log.info("Offset del reloj frente al servidor: %+.1f s", offset.total_seconds())
         objetivo = open_at - timedelta(seconds=cfg.adelanto_seg)
         falta = (objetivo - scheduler.ahora_corregida(offset)).total_seconds()
         if falta > 0:
@@ -151,8 +234,7 @@ def ejecutar_reserva(session: requests.Session, token: str, activity: dict, bran
         log.info("Verificacion en mis reservas: %s", "confirmada" if confirmada else "aun no aparece")
         notificar(cfg.notificar_url, f"Reserva OK: {nombre}")
         return True
-    log.error("Reserva fallida tras %s intentos: %s", res["intentos"], res.get("error"))
-    notificar(cfg.notificar_url, f"Reserva FALLIDA: {nombre}: {res.get('error')}")
+    log.warning("Reserva fallida tras %s intentos: %s", res["intentos"], res.get("error"))
     return False
 
 
@@ -174,12 +256,35 @@ def cmd_reservar(args) -> None:
     a = _buscar_actividad(acts, args.fecha, args.hora, args.clase)
     if not a:
         sys.exit("No encontre esa clase. Revisa fecha (YYYY-MM-DD), hora (HH:MM) y nombre con: python -m actionbot calendario")
-    if a.get("status_name") != "Available":
+    if a.get("status_name") not in ("Available", "Full"):
         sys.exit(f"La clase {_nombre(a)} esta en estado {a.get('status_name')}, no se puede reservar")
     token, _ = api.login(session, cfg.email, cfg.password, branch)
     ok = ejecutar_reserva(session, token, a, branch, cfg, esperar_apertura=args.esperar,
                           ventana_seg=None if args.esperar else 30)
+    if ok:
+        registrar_bot_reserva(a["start_time"][:10], a)
+    else:
+        notificar(cfg.notificar_url, f"Reserva FALLIDA: {_nombre(a)}")
     sys.exit(0 if ok else 1)
+
+
+def secuencia_apertura(session: requests.Session, token: str, branch: dict, cfg: Config,
+                       fecha: str, cands: list[dict]) -> dict | None:
+    """Dispara la reserva del candidato principal a su hora exacta de apertura.
+    Si falla, recorre los fallbacks: espera su apertura si aun no llega,
+    o intenta de una si su ventana ya abrio. Devuelve la clase lograda."""
+    principal = cands[0]
+    log.info("Secuencia de apertura del %s: %s", fecha,
+             " > ".join(f"{c['activity_name']} {c['start_time'][11:16]}" for c in cands))
+    if ejecutar_reserva(session, token, principal, branch, cfg, esperar_apertura=True):
+        return principal
+    for c in cands[1:]:
+        log.info("Fallback: %s", _nombre(c))
+        if ejecutar_reserva(session, token, c, branch, cfg, esperar_apertura=True, ventana_seg=45):
+            return c
+    log.warning("El %s no se logro ninguna clase en la apertura, pasa al rescate", fecha)
+    notificar(cfg.notificar_url, f"Apertura fallida el {fecha}, el bot queda buscando cupos liberados")
+    return None
 
 
 def cmd_vigilar(args) -> None:
@@ -187,65 +292,119 @@ def cmd_vigilar(args) -> None:
     _requiere_credenciales(cfg)
     session = api.new_session()
     branch = _branch(session, cfg)
-    log.info("Vigilando sede %s. Objetivos: %s", branch["name"],
-             " | ".join(",".join(o.clases) for o in cfg.objetivos))
-    estado = cargar_estado()
+    log.info("Vigilando %s. Prioridad %s, franja %s a %s, dias %s. Rescate cada %g min: %s",
+             branch["name"], " > ".join(cfg.plan.prioridad), cfg.plan.entre[0], cfg.plan.entre[1],
+             ",".join(DIAS_NOMBRES[d][:3] for d in cfg.plan.dias),
+             cfg.rescate.intervalo_min, "activo" if cfg.rescate.activo else "apagado")
+
+    token: str | None = None
+    aperturas_hechas: set[str] = set()
+    cubiertos_avisados: set[str] = set()
+
+    def obtener_token(forzar: bool = False) -> str:
+        nonlocal token
+        if token is None or forzar:
+            token, _ = api.login(session, cfg.email, cfg.password, branch)
+            log.info("Sesion iniciada")
+        return token
+
+    def bookings_actuales():
+        try:
+            return api.my_bookings(session, obtener_token())
+        except api.ApiError as e:
+            if e.status in (401, 403):
+                return api.my_bookings(session, obtener_token(forzar=True))
+            raise
 
     while True:
         try:
             acts = scheduler.calendario_dos_semanas(session, branch)
-            targets = scheduler.objetivos_de_la_agenda(acts, cfg)
+            por_fecha = scheduler.candidatos_por_dia(acts, cfg)
+            bookings = bookings_actuales()
+            saludable = _bookings_saludable(bookings)
+            if not saludable:
+                log.debug("El listado de reservas vino inconsistente (total > 0 con items vacios)")
+            bot_res = cargar_bot_reservas()
             ahora = datetime.now(timezone.utc)
-            pendientes = [
-                t for t in targets
-                if scheduler.clave(t["activity"]) not in estado
-                and t["start"] > ahora + timedelta(minutes=5)
-            ]
-            if not pendientes:
-                log.info("Sin objetivos pendientes por ahora, vuelvo a revisar en 30 min")
-                time.sleep(1800)
-                continue
 
-            t = pendientes[0]
-            a = t["activity"]
-            falta = (t["open_at"] - ahora).total_seconds()
+            proxima_apertura = None   # (open_at, fecha, cands)
+            rescates = []             # (fecha, cands)
+            for fecha in sorted(por_fecha):
+                cands = [c for c in por_fecha[fecha]
+                         if scheduler.parse_start(c) > ahora + timedelta(minutes=2)]
+                if not cands:
+                    continue
 
-            if falta > 150:
-                dormir = min(falta - 120, 3600)
-                log.info("Proximo objetivo: %s, abre %s, duermo %.0f s",
-                         _nombre(a),
-                         t["open_at"].astimezone().strftime("%Y-%m-%d %H:%M:%S"),
-                         dormir)
-                time.sleep(dormir)
-                continue
+                reserva = scheduler.dia_cubierto(bookings, fecha)
+                if reserva is None and fecha in bot_res:
+                    if saludable:
+                        # El bot habia reservado este dia y la reserva ya no existe:
+                        # la cancelaron, vuelve a buscar clase para ese dia
+                        log.warning("La reserva del %s (%s) ya no aparece, la cancelaron, vuelvo a buscar",
+                                    fecha, bot_res[fecha].get("clase"))
+                        notificar(cfg.notificar_url,
+                                  f"Cancelaron tu reserva del {fecha}, el bot vuelve a buscar cupo")
+                        bot_res.pop(fecha)
+                        guardar_bot_reservas(bot_res)
+                        cubiertos_avisados.discard(fecha)
+                    else:
+                        # Listado inconsistente: confia en el registro propio
+                        reserva = {"activity_name": bot_res[fecha].get("clase"), "start_time": ""}
 
-            # Ventana de disparo: refrescar la actividad, iniciar sesion y esperar al segundo exacto
-            acts2 = scheduler.calendario_dos_semanas(session, branch)
-            a2 = next((x for x in acts2 if scheduler.clave(x) == scheduler.clave(a)), None)
-            if a2 is None or a2.get("status_name") != "Available":
-                log.warning("La clase %s ya no aparece disponible, la salto", _nombre(a))
-                estado[scheduler.clave(a)] = {"resultado": "no_disponible", "clase": _nombre(a),
-                                              "ts": datetime.now().isoformat()}
-                guardar_estado(estado)
-                continue
+                if reserva:
+                    if fecha not in cubiertos_avisados:
+                        log.info("El %s ya esta cubierto: %s", fecha, _cubierto_str(reserva))
+                        cubiertos_avisados.add(fecha)
+                    continue
+                cubiertos_avisados.discard(fecha)
 
-            ventana = None
-            if falta < -600:
-                # La apertura paso hace rato, no hay carrera: intento corto por si queda cupo
-                ventana = 20.0
-            elif len(pendientes) > 1:
-                separacion = (pendientes[1]["open_at"] - t["open_at"]).total_seconds()
-                if separacion < cfg.rafaga_seg:
-                    ventana = max(20.0, separacion - 5)
+                principal = next((c for c in cands if c.get("status_name") == "Available"), cands[0])
+                open_at = scheduler.apertura_de(principal, cfg)
+                if open_at > ahora and fecha not in aperturas_hechas:
+                    if proxima_apertura is None or open_at < proxima_apertura[0]:
+                        proxima_apertura = (open_at, fecha, cands)
+                elif cfg.rescate.activo:
+                    rescates.append((fecha, cands))
 
-            token, _ = api.login(session, cfg.email, cfg.password, branch)
-            ok = ejecutar_reserva(session, token, a2, branch, cfg, esperar_apertura=True,
-                                  ventana_seg=ventana)
-            estado[scheduler.clave(a)] = {"resultado": "ok" if ok else "fallo", "clase": _nombre(a),
-                                          "ts": datetime.now().isoformat()}
-            guardar_estado(estado)
+            # Disparo exacto si la proxima apertura esta encima
+            if proxima_apertura:
+                falta = (proxima_apertura[0] - datetime.now(timezone.utc)).total_seconds()
+                if falta <= 150:
+                    _, fecha, cands = proxima_apertura
+                    ganada = secuencia_apertura(session, obtener_token(), branch, cfg, fecha, cands)
+                    if ganada:
+                        registrar_bot_reserva(fecha, ganada)
+                    aperturas_hechas.add(fecha)
+                    if args.una_vez:
+                        return
+                    continue
+
+            # Rescate: busca cupos liberados en dias no cubiertos con la ventana ya abierta
+            for fecha, cands in rescates:
+                for c in cands:
+                    if c.get("status_name") == "Finalized":
+                        continue
+                    if int(c.get("occupation") or 0) >= int(c.get("capacity") or 0):
+                        continue
+                    log.info("Rescate del %s: %s tiene %s/%s, intento",
+                             fecha, _nombre(c), c["occupation"], c["capacity"])
+                    if ejecutar_reserva(session, obtener_token(), c, branch, cfg,
+                                        esperar_apertura=False, ventana_seg=15):
+                        registrar_bot_reserva(fecha, c)
+                        break
+
+            # Cadencia: rescate cada intervalo_min, o hasta 2 min antes de la apertura
+            espera = cfg.rescate.intervalo_min * 60 if cfg.rescate.activo else 1800
+            detalle = "proximo ciclo de rescate" if rescates else "proxima revision"
+            if proxima_apertura:
+                falta = (proxima_apertura[0] - datetime.now(timezone.utc)).total_seconds()
+                if falta - 120 < espera:
+                    espera = max(5.0, falta - 120)
+                    detalle = f"apertura del {proxima_apertura[1]} ({_nombre(proxima_apertura[2][0])})"
+            log.info("Duermo %.0f s, %s", espera, detalle)
             if args.una_vez:
                 return
+            time.sleep(espera)
         except api.ApiError as e:
             log.error("Error de API en el ciclo: %s", e)
             time.sleep(60)
@@ -265,7 +424,8 @@ def main(argv=None) -> None:
     c.add_argument("--clase", help="Filtra por nombre de clase, ejemplo SAVAGE")
     c.set_defaults(fn=cmd_calendario)
 
-    sub.add_parser("plan", help="Muestra que clases se reservarian y a que hora abre cada una").set_defaults(fn=cmd_plan)
+    sub.add_parser("horarios", help="Mapa semanal de horarios por clase y aperturas del plan").set_defaults(fn=cmd_horarios)
+    sub.add_parser("plan", help="Que reservaria el bot cada dia y a que hora abre").set_defaults(fn=cmd_plan)
 
     r = sub.add_parser("reservar", help="Reserva una clase puntual")
     r.add_argument("--fecha", required=True, help="Fecha de la clase, YYYY-MM-DD")
@@ -275,9 +435,9 @@ def main(argv=None) -> None:
                    help="Si la apertura aun no llega, espera y dispara a la hora exacta")
     r.set_defaults(fn=cmd_reservar)
 
-    v = sub.add_parser("vigilar", help="Proceso continuo que reserva solo segun config.yaml")
+    v = sub.add_parser("vigilar", help="Proceso continuo: aperturas exactas mas rescate de cupos liberados")
     v.add_argument("--una-vez", action="store_true", dest="una_vez",
-                   help="Procesa solo el proximo objetivo y termina")
+                   help="Ejecuta un solo ciclo y termina")
     v.set_defaults(fn=cmd_vigilar)
 
     sub.add_parser("reservas", help="Lista tus reservas vigentes").set_defaults(fn=cmd_reservas)

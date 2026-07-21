@@ -32,23 +32,28 @@ def _parse_hhmm(h: str) -> str:
 
 
 @dataclass
-class Objetivo:
-    clases: list[str]
-    dias: list[int] = field(default_factory=list)
-    horas: list[str] = field(default_factory=list)
-    entre: tuple[str, str] | None = None
-    max_por_dia: int = 1
+class PlanDiario:
+    dias: list[int] = field(default_factory=lambda: list(range(7)))
+    prioridad: list[str] = field(default_factory=list)
+    entre: tuple[str, str] = ("00:00", "23:59")
+
+
+@dataclass
+class Rescate:
+    activo: bool = True
+    intervalo_min: float = 15.0
 
 
 @dataclass
 class Config:
     sede: str
     apertura_horas: float
-    objetivos: list[Objetivo]
+    plan: PlanDiario
+    rescate: Rescate
     email: str
     password: str
     adelanto_seg: float = 2.0
-    rafaga_seg: float = 180.0
+    rafaga_seg: float = 120.0
     intervalo_seg: float = 0.5
     notificar_url: str | None = None
 
@@ -63,27 +68,24 @@ def cargar(path: str | Path = "config.yaml") -> Config:
     email = os.environ.get("ACTION_EMAIL", "").strip()
     password = os.environ.get("ACTION_PASSWORD", "").strip()
 
-    objetivos: list[Objetivo] = []
-    for o in raw.get("objetivos", []):
-        clases = o.get("clases") or ([o["clase"]] if o.get("clase") else [])
-        if not clases:
-            raise ValueError("Cada objetivo necesita el campo clase o clases")
-        entre = None
-        if o.get("entre"):
-            if len(o["entre"]) != 2:
-                raise ValueError('El campo entre debe tener dos horas, ejemplo ["05:00", "07:00"]')
-            entre = (_parse_hhmm(o["entre"][0]), _parse_hhmm(o["entre"][1]))
-        objetivos.append(
-            Objetivo(
-                clases=[str(c).strip().upper() for c in clases],
-                dias=[_parse_dia(d) for d in (o.get("dias") or [])],
-                horas=[_parse_hhmm(h) for h in (o.get("horas") or [])],
-                entre=entre,
-                max_por_dia=int(o.get("max_por_dia", 1)),
-            )
-        )
-    if not objetivos:
-        raise ValueError("config.yaml no tiene objetivos definidos")
+    plan_raw = raw.get("plan_diario") or {}
+    prioridad = [str(c).strip().upper() for c in (plan_raw.get("prioridad") or [])]
+    if not prioridad:
+        raise ValueError("config.yaml necesita plan_diario.prioridad con al menos una clase")
+    entre_raw = plan_raw.get("entre") or ["00:00", "23:59"]
+    if len(entre_raw) != 2:
+        raise ValueError('plan_diario.entre debe tener dos horas, ejemplo ["06:00", "07:00"]')
+    plan = PlanDiario(
+        dias=[_parse_dia(d) for d in (plan_raw.get("dias") or [])] or list(range(7)),
+        prioridad=prioridad,
+        entre=(_parse_hhmm(entre_raw[0]), _parse_hhmm(entre_raw[1])),
+    )
+
+    rescate_raw = raw.get("rescate") or {}
+    rescate = Rescate(
+        activo=bool(rescate_raw.get("activo", True)),
+        intervalo_min=float(rescate_raw.get("intervalo_min", 15)),
+    )
 
     sede = str(raw.get("sede") or "").strip()
     if not sede:
@@ -92,11 +94,12 @@ def cargar(path: str | Path = "config.yaml") -> Config:
     return Config(
         sede=sede,
         apertura_horas=float(raw.get("apertura_horas", 24)),
-        objetivos=objetivos,
+        plan=plan,
+        rescate=rescate,
         email=email,
         password=password,
         adelanto_seg=float(raw.get("adelanto_seg", 2.0)),
-        rafaga_seg=float(raw.get("rafaga_seg", 180)),
+        rafaga_seg=float(raw.get("rafaga_seg", 120)),
         intervalo_seg=float(raw.get("intervalo_seg", 0.5)),
         notificar_url=(raw.get("notificar_url") or None),
     )

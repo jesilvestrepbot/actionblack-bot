@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from . import api
-from .config import Config, Objetivo
+from .config import Config
 
 log = logging.getLogger("actionbot")
 
@@ -43,46 +43,49 @@ def calendario_dos_semanas(session: requests.Session, branch: dict) -> list[dict
     return sorted(vistos.values(), key=lambda a: a["start_time"])
 
 
-def coincide(activity: dict, obj: Objetivo) -> bool:
-    if activity.get("status_name") != "Available":
-        return False
-    if activity["activity_name"].strip().upper() not in obj.clases:
-        return False
-    start = parse_start(activity)
-    if obj.dias and start.weekday() not in obj.dias:
-        return False
-    h = _hhmm(activity)
-    if obj.horas:
-        return h in obj.horas
-    if obj.entre:
-        return obj.entre[0] <= h <= obj.entre[1]
-    return True
-
-
-def objetivos_de_la_agenda(activities: list[dict], cfg: Config) -> list[dict]:
-    """Devuelve [{activity, start, open_at}] ordenado por hora de apertura."""
-    elegidos: list[dict] = []
-    for obj in cfg.objetivos:
-        por_dia: dict[str, list[dict]] = {}
-        for a in activities:
-            if not coincide(a, obj):
-                continue
-            por_dia.setdefault(a["start_time"][:10], []).append(a)
-        for lista in por_dia.values():
-            lista.sort(key=lambda x: x["start_time"])
-            elegidos.extend(lista[: obj.max_por_dia])
-
-    unicos = {clave(a): a for a in elegidos}
-    out = []
-    for a in unicos.values():
+def candidatos_por_dia(activities: list[dict], cfg: Config) -> dict[str, list[dict]]:
+    """Para cada fecha del plan: las clases candidatas ordenadas por prioridad
+    y luego por hora. Excluye las canceladas; el estado fino (Available, Full,
+    Finalized) se filtra en cada uso."""
+    plan = cfg.plan
+    por_fecha: dict[str, list[dict]] = {}
+    for a in activities:
+        nombre = a["activity_name"].strip().upper()
+        if nombre not in plan.prioridad:
+            continue
+        if a.get("status_name") == "Canceled":
+            continue
         start = parse_start(a)
-        out.append({
-            "activity": a,
-            "start": start,
-            "open_at": start - timedelta(hours=cfg.apertura_horas),
-        })
-    out.sort(key=lambda x: x["open_at"])
-    return out
+        if plan.dias and start.weekday() not in plan.dias:
+            continue
+        h = _hhmm(a)
+        if not (plan.entre[0] <= h <= plan.entre[1]):
+            continue
+        por_fecha.setdefault(a["start_time"][:10], []).append(a)
+    for lista in por_fecha.values():
+        lista.sort(key=lambda x: (plan.prioridad.index(x["activity_name"].strip().upper()),
+                                  x["start_time"]))
+    return por_fecha
+
+
+def apertura_de(activity: dict, cfg: Config) -> datetime:
+    return parse_start(activity) - timedelta(hours=cfg.apertura_horas)
+
+
+def dia_cubierto(bookings, fecha: str) -> dict | None:
+    """Reserva vigente (Booked) de ese dia, si existe. Cuenta cualquier clase,
+    tambien las hechas a mano desde la app: la regla es una clase por dia."""
+    if isinstance(bookings, dict):
+        items = bookings.get("items") or bookings.get("bookings") or []
+    else:
+        items = bookings or []
+    for b in items:
+        if not isinstance(b, dict):
+            continue
+        st = str(b.get("start_time") or "")
+        if st[:10] == fecha and (b.get("status_name") or "").lower() == "booked":
+            return b
+    return None
 
 
 def clock_offset(session: requests.Session) -> timedelta:
@@ -144,15 +147,14 @@ def rafaga_reserva(session: requests.Session, token: str, activity: dict, branch
 
 
 def ya_reservada(session: requests.Session, token: str, activity: dict) -> bool:
-    """Busca la actividad en las reservas vigentes del usuario.
-    Tolerante al esquema porque la forma exacta de la respuesta puede variar."""
+    """Busca esa misma clase en las reservas vigentes del usuario."""
     try:
         data = api.my_bookings(session, token)
     except Exception as e:
         log.debug("No pude consultar mis reservas: %s", e)
         return False
     if isinstance(data, dict):
-        items = data.get("bookings") or data.get("items") or data.get("results") or []
+        items = data.get("items") or data.get("bookings") or []
     else:
         items = data or []
     for b in items:

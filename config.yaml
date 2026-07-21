@@ -4,30 +4,25 @@ sede: PepeSierra
 # Horas antes del inicio de la clase en que se abre la reserva
 apertura_horas: 24
 
-# Que reservar. Cada objetivo se evalua por separado.
-#   clase        nombre exacto de la clase (SAVAGE, TONIC, JAB, GIRO, SOLIDO)
-#   dias         lun, mar, mie, jue, vie, sab, dom. Vacio o ausente: todos los dias
-#   horas        lista de horas exactas HH:MM. Si la defines, se ignora entre
-#   entre        franja [desde, hasta] para cuando el gimnasio mueve el horario unos minutos
-#   max_por_dia  cuantas clases de este objetivo reservar por dia (por defecto 1)
-#
-# Ojo: dos clases que se cruzan en horario no se pueden reservar a la vez,
-# la API rechaza la segunda con ACTIVITIES_OVERLAPPING.
-objetivos:
-  - clase: SAVAGE
-    dias: [lun, mar, mie, jue, vie]
-    entre: ["05:00", "07:00"]
-    max_por_dia: 1
-  - clase: TONIC
-    dias: [lun, mar, mie, jue, vie]
-    entre: ["05:00", "07:00"]
-    max_por_dia: 1
+# Una clase por dia: el bot recorre las clases en orden de prioridad
+# dentro de la franja y reserva la primera que logre.
+# Si el dia ya tiene una reserva (del bot o hecha a mano) no toca nada.
+plan_diario:
+  dias: [lun, mar, mie, jue, vie]
+  prioridad: [SAVAGE, TONIC]
+  entre: ["06:00", "07:00"]
+
+# Si la apertura fallo (clase llena) o el gimnasio cancela tu reserva,
+# el bot sigue buscando cupo liberado cada intervalo_min minutos,
+# de dia y de noche, hasta la hora de inicio de la clase.
+rescate:
+  activo: true
+  intervalo_min: 15
 
 # Ajustes del disparo
-adelanto_seg: 2        # margen en segundos con el que se empieza a intentar antes de la apertura
-rafaga_seg: 180        # cuanto tiempo maximo seguir intentando tras la apertura
+adelanto_seg: 2        # margen en segundos con el que empieza a intentar antes de la apertura
+rafaga_seg: 120        # cuanto tiempo maximo seguir intentando tras la apertura
 intervalo_seg: 0.5     # pausa entre intentos
 
-# Opcional: URL a la que se envia un POST con el resultado de cada reserva.
-# Sirve por ejemplo un topic de ntfy.sh para recibirlo en el celular:
+# Opcional: avisos al celular. Sirve un topic de ntfy.sh:
 # notificar_url: https://ntfy.sh/mi-topic-secreto
