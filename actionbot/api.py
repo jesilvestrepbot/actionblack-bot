@@ -30,6 +30,8 @@ BASE_HEADERS = {
 STOP_CODES = {
     "ACTIVITIES_OVERLAPPING",
     "USER_BLOCKED_ERROR",
+    "MISSING_PARAMETER",
+    "INVALID_PARAMETER",
 }
 
 
@@ -142,6 +144,13 @@ def booking_payload(activity: dict, branch: dict) -> dict:
         "token_branch": branch.get("evo_token") or str(branch.get("id")),
         "activity_start": activity["start_time"][11:16],
         "timezone": activity.get("timezone") or branch.get("timezone"),
+        "activity_name": activity.get("activity_name"),
+        "capacity": activity.get("capacity"),
+        "branch_name": activity.get("branch_name") or branch.get("name"),
+        "branch_id": str(activity.get("branch_id") or branch.get("id")),
+        "partner_name": branch.get("partner_name") or "EVO",
+        "country_code": branch.get("country_code") or "CO",
+        "booking_origin": "WEB",
     }
 
 

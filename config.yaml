@@ -1,5 +1,5 @@
 # Sede tal como aparece en: python -m actionbot sedes
-sede: AltoDePalmas
+sede: PepeSierra
 
 # Horas antes del inicio de la clase en que se abre la reserva
 apertura_horas: 24
