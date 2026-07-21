@@ -119,24 +119,29 @@ def cmd_horarios(args) -> None:
         mapa.setdefault(wd, {}).setdefault(nombre, set()).add(a["start_time"][11:16])
 
     print(f"Horarios de {branch['name']} segun las proximas dos semanas. * = objetivo del plan")
+    print(f"Franja entre semana {plan.entre[0]} a {plan.entre[1]}, "
+          f"fines de semana y festivos {plan.entre_festivos[0]} a {plan.entre_festivos[1]}")
     for wd in sorted(mapa):
+        franja = plan.entre_festivos if wd >= 5 else plan.entre
         print(f"\n{DIAS_NOMBRES[wd]}")
         for clase in sorted(mapa[wd]):
             marcas = []
             for h in sorted(mapa[wd][clase]):
                 es_plan = (clase in plan.prioridad
                            and wd in plan.dias
-                           and plan.entre[0] <= h <= plan.entre[1])
+                           and franja[0] <= h <= franja[1])
                 marcas.append(h + ("*" if es_plan else ""))
             print(f"  {clase:10} {' '.join(marcas)}")
 
     print("\nAperturas del plan: el bot dispara a la misma hora del dia anterior")
+    print("(en festivos entre semana aplica la franja de festivo, el bot lo resuelve solo)")
     for wd in sorted(mapa):
         if wd not in plan.dias:
             continue
+        franja = plan.entre_festivos if wd >= 5 else plan.entre
         for clase in plan.prioridad:
             horas = sorted(h for h in mapa[wd].get(clase, set())
-                           if plan.entre[0] <= h <= plan.entre[1])
+                           if franja[0] <= h <= franja[1])
             if horas:
                 previo = DIAS_NOMBRES[(wd - 1) % 7]
                 print(f"  {DIAS_NOMBRES[wd]:10} {clase:8} {horas[0]}  ->  disparo el {previo} a las {horas[0]}")
@@ -248,19 +253,27 @@ def _buscar_actividad(acts: list[dict], fecha: str, hora: str, clase: str) -> di
 
 
 def cmd_reservar(args) -> None:
+    t0 = time.monotonic()
     cfg = cargar(args.config)
     _requiere_credenciales(cfg)
     session = api.new_session()
     branch = _branch(session, cfg)
-    acts = scheduler.calendario_dos_semanas(session, branch)
+    log.info("Sede resuelta en %.1f s", time.monotonic() - t0)
+    t1 = time.monotonic()
+    # Solo la semana de la fecha pedida, para no perder tiempo
+    acts = api.get_calendar(session, branch, args.fecha)
     a = _buscar_actividad(acts, args.fecha, args.hora, args.clase)
     if not a:
         sys.exit("No encontre esa clase. Revisa fecha (YYYY-MM-DD), hora (HH:MM) y nombre con: python -m actionbot calendario")
     if a.get("status_name") not in ("Available", "Full"):
         sys.exit(f"La clase {_nombre(a)} esta en estado {a.get('status_name')}, no se puede reservar")
+    log.info("Calendario consultado en %.1f s", time.monotonic() - t1)
+    t2 = time.monotonic()
     token, _ = api.login(session, cfg.email, cfg.password, branch)
+    log.info("Login en %.1f s", time.monotonic() - t2)
     ok = ejecutar_reserva(session, token, a, branch, cfg, esperar_apertura=args.esperar,
                           ventana_seg=None if args.esperar else 30)
+    log.info("Tiempo total del comando: %.1f s", time.monotonic() - t0)
     if ok:
         registrar_bot_reserva(a["start_time"][:10], a)
     else:

@@ -4,12 +4,16 @@ Bot de uso personal que consigue una clase por dia en actionblack.co. Las reserv
 
 ## Que hace
 
-- Una clase por dia, recorriendo las clases en orden de prioridad (por defecto SAVAGE y si no se puede TONIC) dentro de una franja horaria (por defecto 06:00 a 07:00).
+- Una clase por dia, los 7 dias, recorriendo las clases en orden de prioridad (por defecto SAVAGE y si no se puede TONIC) dentro de una franja horaria.
+- Dos franjas: entre semana (06:00 a 07:00) y fines de semana o festivos (07:00 a 09:00), porque el gimnasio publica horarios distintos. Los festivos salen de la lista `festivos` del config y ademas se autodetectan: si un dia entre semana no tiene clases del plan en la franja normal, el bot asume horario de festivo.
+- El calendario se consulta en vivo en cada ciclo, asi que el horario de la semana siguiente se recoge solo, sin pasos manuales el domingo.
 - Dispara la reserva del candidato principal en el segundo exacto de la apertura, con rafaga de reintentos. Si falla, intenta los fallbacks del dia.
-- Si el dia queda sin clase (todo lleno), entra en rescate: revisa el calendario cada 15 minutos y toma cualquier cupo que se libere, hasta la hora de inicio de la clase.
+- Si el dia queda sin clase (todo lleno), entra en rescate: revisa el calendario cada 15 minutos, de dia y de noche, y toma cualquier cupo que se libere hasta la hora de inicio de la clase.
 - Si el gimnasio cancela una reserva que el bot habia logrado, lo detecta y vuelve a buscar clase para ese dia.
 - Si el dia ya tiene una reserva tuya hecha a mano (desde la app), no toca nada.
 - Puede avisar al celular con `notificar_url` (por ejemplo un topic de ntfy.sh).
+
+Tiempos medidos en vivo (2026-07-21): el POST de reserva responde en menos de 2 segundos. En el daemon, el calendario y el login se resuelven antes de la ventana, asi que en el segundo de la apertura solo corre ese POST. El comando manual `reservar` completo, con calendario y login incluidos, tomo 17.6 segundos.
 
 ## Como funciona por dentro
 
@@ -72,15 +76,18 @@ Edita `.env` con tu correo y contrasena de actionblack.co. Ese archivo queda fue
 sede: PepeSierra
 apertura_horas: 24
 plan_diario:
-  dias: [lun, mar, mie, jue, vie]
+  dias: [lun, mar, mie, jue, vie, sab, dom]
   prioridad: [SAVAGE, TONIC]
   entre: ["06:00", "07:00"]
+  entre_festivos: ["07:00", "09:00"]
+festivos:
+  - 2026-08-07
 rescate:
   activo: true
   intervalo_min: 15
 ```
 
-La franja `entre` es importante porque el gimnasio mueve los horarios unos minutos cada dia (la SAVAGE de la manana es 06:15, 06:20, 06:25 o 06:30 segun el dia).
+La franja `entre` es importante porque el gimnasio mueve los horarios unos minutos cada dia (la SAVAGE de la manana es 06:15, 06:20, 06:25 o 06:30 segun el dia). `entre_festivos` aplica sabados, domingos y los dias de la lista `festivos`, que hay que revisar cada ano.
 
 ## Comandos
 

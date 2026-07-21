@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -36,6 +37,8 @@ class PlanDiario:
     dias: list[int] = field(default_factory=lambda: list(range(7)))
     prioridad: list[str] = field(default_factory=list)
     entre: tuple[str, str] = ("00:00", "23:59")
+    entre_festivos: tuple[str, str] = ("00:00", "23:59")
+    festivos: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -75,10 +78,23 @@ def cargar(path: str | Path = "config.yaml") -> Config:
     entre_raw = plan_raw.get("entre") or ["00:00", "23:59"]
     if len(entre_raw) != 2:
         raise ValueError('plan_diario.entre debe tener dos horas, ejemplo ["06:00", "07:00"]')
+    entre_fest_raw = plan_raw.get("entre_festivos") or entre_raw
+    if len(entre_fest_raw) != 2:
+        raise ValueError('plan_diario.entre_festivos debe tener dos horas, ejemplo ["07:00", "09:00"]')
+    festivos = set()
+    for f in raw.get("festivos") or []:
+        fecha = str(f).strip()[:10]
+        try:
+            datetime.strptime(fecha, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"Festivo invalido: {f}, usa formato YYYY-MM-DD")
+        festivos.add(fecha)
     plan = PlanDiario(
         dias=[_parse_dia(d) for d in (plan_raw.get("dias") or [])] or list(range(7)),
         prioridad=prioridad,
         entre=(_parse_hhmm(entre_raw[0]), _parse_hhmm(entre_raw[1])),
+        entre_festivos=(_parse_hhmm(entre_fest_raw[0]), _parse_hhmm(entre_fest_raw[1])),
+        festivos=festivos,
     )
 
     rescate_raw = raw.get("rescate") or {}

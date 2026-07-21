@@ -7,10 +7,38 @@ apertura_horas: 24
 # Una clase por dia: el bot recorre las clases en orden de prioridad
 # dentro de la franja y reserva la primera que logre.
 # Si el dia ya tiene una reserva (del bot o hecha a mano) no toca nada.
+# El calendario se consulta en vivo en cada ciclo, asi que los cambios
+# de horario de cada semana se recogen solos.
 plan_diario:
-  dias: [lun, mar, mie, jue, vie]
+  dias: [lun, mar, mie, jue, vie, sab, dom]
   prioridad: [SAVAGE, TONIC]
   entre: ["06:00", "07:00"]
+  # Sabados, domingos y festivos tienen otro horario en el gimnasio
+  entre_festivos: ["07:00", "09:00"]
+
+# Festivos de Colombia: esos dias se usa entre_festivos.
+# Revisar y completar cada ano. Si un festivo falta en la lista, el bot
+# igual lo detecta: al no haber clases en la franja normal de un dia
+# entre semana, pasa solo a la franja de festivo.
+festivos:
+  - 2026-08-07
+  - 2026-08-17
+  - 2026-10-12
+  - 2026-11-02
+  - 2026-11-16
+  - 2026-12-08
+  - 2026-12-25
+  - 2027-01-01
+  - 2027-01-11
+  - 2027-03-22
+  - 2027-03-25
+  - 2027-03-26
+  - 2027-05-01
+  - 2027-05-10
+  - 2027-05-31
+  - 2027-06-07
+  - 2027-07-05
+  - 2027-07-20
 
 # Si la apertura fallo (clase llena) o el gimnasio cancela tu reserva,
 # el bot sigue buscando cupo liberado cada intervalo_min minutos,

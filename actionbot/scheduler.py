@@ -43,12 +43,20 @@ def calendario_dos_semanas(session: requests.Session, branch: dict) -> list[dict
     return sorted(vistos.values(), key=lambda a: a["start_time"])
 
 
+def es_festivo(fecha: str, weekday: int, cfg: Config) -> bool:
+    """Sabados, domingos y festivos declarados usan la franja de festivo."""
+    return weekday >= 5 or fecha in cfg.plan.festivos
+
+
 def candidatos_por_dia(activities: list[dict], cfg: Config) -> dict[str, list[dict]]:
     """Para cada fecha del plan: las clases candidatas ordenadas por prioridad
-    y luego por hora. Excluye las canceladas; el estado fino (Available, Full,
-    Finalized) se filtra en cada uso."""
+    y luego por hora. La franja depende del tipo de dia (normal o festivo).
+    Si un dia entre semana no tiene clases en la franja normal, se asume
+    horario de festivo no declarado y se usa la otra franja.
+    Excluye las canceladas; el estado fino (Available, Full, Finalized)
+    se filtra en cada uso."""
     plan = cfg.plan
-    por_fecha: dict[str, list[dict]] = {}
+    crudos: dict[str, list[dict]] = {}
     for a in activities:
         nombre = a["activity_name"].strip().upper()
         if nombre not in plan.prioridad:
@@ -58,13 +66,23 @@ def candidatos_por_dia(activities: list[dict], cfg: Config) -> dict[str, list[di
         start = parse_start(a)
         if plan.dias and start.weekday() not in plan.dias:
             continue
-        h = _hhmm(a)
-        if not (plan.entre[0] <= h <= plan.entre[1]):
-            continue
-        por_fecha.setdefault(a["start_time"][:10], []).append(a)
-    for lista in por_fecha.values():
-        lista.sort(key=lambda x: (plan.prioridad.index(x["activity_name"].strip().upper()),
-                                  x["start_time"]))
+        crudos.setdefault(a["start_time"][:10], []).append(a)
+
+    por_fecha: dict[str, list[dict]] = {}
+    for fecha, lista in crudos.items():
+        wd = parse_start(lista[0]).weekday()
+        franja = plan.entre_festivos if es_festivo(fecha, wd, cfg) else plan.entre
+        sel = [a for a in lista if franja[0] <= _hhmm(a) <= franja[1]]
+        if not sel and not es_festivo(fecha, wd, cfg):
+            sel = [a for a in lista
+                   if plan.entre_festivos[0] <= _hhmm(a) <= plan.entre_festivos[1]]
+            if sel:
+                log.info("El %s no tiene clases del plan en la franja normal, "
+                         "parece festivo, uso la franja de festivo", fecha)
+        if sel:
+            sel.sort(key=lambda x: (plan.prioridad.index(x["activity_name"].strip().upper()),
+                                    x["start_time"]))
+            por_fecha[fecha] = sel
     return por_fecha
 
 
@@ -132,7 +150,9 @@ def rafaga_reserva(session: requests.Session, token: str, activity: dict, branch
     while time.monotonic() < fin:
         intentos += 1
         try:
+            t_post = time.monotonic()
             res = api.book(session, token, activity, branch)
+            log.info("POST de reserva respondio en %.2f s (intento %s)", time.monotonic() - t_post, intentos)
             return {"ok": True, "intentos": intentos, "respuesta": res}
         except api.ApiError as e:
             ultimo = e
