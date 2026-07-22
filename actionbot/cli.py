@@ -381,6 +381,88 @@ def cmd_cazar(args) -> None:
             time.sleep(60)
 
 
+def cmd_sesion(args) -> None:
+    """Una sesion de reserva que corre una vez y se cierra sola. Busca el
+    proximo dia sin cubrir, y:
+      - si su apertura esta cerca (dentro de max_espera), espera al segundo
+        exacto, reserva con prioridad y fallbacks, y termina;
+      - si la apertura ya paso (arranque tarde), caza cupo hasta que empiece
+        la clase o se agote max_espera;
+      - si la apertura esta lejos, se cierra para que la tarea la relance.
+    Pensada para una tarea programada diaria: se despierta cerca de la hora
+    de reserva, hace su trabajo y se apaga. No es un demonio 24/7."""
+    cfg = cargar(args.config)
+    _requiere_credenciales(cfg)
+    session = api.new_session()
+    branch = _branch(session, cfg)
+    token, _ = api.login(session, cfg.email, cfg.password, branch)
+    acts = scheduler.calendario_dos_semanas(session, branch)
+    por_fecha = scheduler.candidatos_por_dia(acts, cfg)
+    bot_res = cargar_bot_reservas()
+    try:
+        bookings = api.my_bookings(session, token)
+    except Exception:
+        bookings = {}
+    ahora = datetime.now(timezone.utc)
+    max_espera = max(60.0, args.max_espera_min * 60)
+
+    def cubierto(fecha: str) -> bool:
+        # Fuente principal: registro propio del bot (fiable). Secundaria: la
+        # lista de reservas del gym cuando el endpoint la devuelve (intermitente).
+        if fecha in bot_res:
+            return True
+        return scheduler.dia_cubierto(bookings, fecha) is not None
+
+    objetivo = None
+    for fecha in sorted(por_fecha):
+        cands = [c for c in por_fecha[fecha] if scheduler.parse_start(c) > ahora]
+        if not cands or cubierto(fecha):
+            continue
+        objetivo = (fecha, cands)
+        break
+    if objetivo is None:
+        log.info("Nada por reservar: los proximos dias del plan ya estan cubiertos")
+        return
+
+    fecha, cands = objetivo
+    principal = cands[0]
+    open_at = scheduler.apertura_de(principal, cfg)
+    espera = (open_at - ahora).total_seconds()
+    if espera > max_espera:
+        log.info("Proxima apertura: %s, abre en %.0f min (limite %g min). Me cierro; la tarea diaria me relanza mas cerca.",
+                 _nombre(principal), espera / 60, args.max_espera_min)
+        return
+
+    ganada = None
+    if espera > 0:
+        log.info("Apertura de %s en %.0f s. Espero y disparo.", _nombre(principal), espera)
+        ganada = secuencia_apertura(session, token, branch, cfg, fecha, cands)
+    else:
+        fin = time.monotonic() + max_espera
+        inicio_clase = scheduler.parse_start(principal)
+        log.info("La apertura de %s ya paso; cazo cupo hasta %g min o hasta que empiece la clase",
+                 fecha, args.max_espera_min)
+        while ganada is None and time.monotonic() < fin and datetime.now(timezone.utc) < inicio_clase - timedelta(minutes=2):
+            acts2 = api.get_calendar(session, branch, fecha)
+            for c in cands:
+                a2 = next((x for x in acts2 if scheduler.clave(x) == scheduler.clave(c)), None)
+                if a2 and a2.get("status_name") == "Available" \
+                        and int(a2.get("occupation") or 0) < int(a2.get("capacity") or 0):
+                    if scheduler.rafaga_reserva(session, token, a2, branch, cfg, ventana_seg=20)["ok"]:
+                        ganada = a2
+                        break
+            if ganada is None:
+                time.sleep(cfg.rescate.intervalo_min * 60)
+
+    if ganada:
+        registrar_bot_reserva(fecha, ganada)
+        log.info("Sesion completada, reservado: %s", _nombre(ganada))
+        notificar(cfg.notificar_url, f"Reserva OK: {_nombre(ganada)}")
+    else:
+        log.warning("Sesion sin exito para %s (se cerro la clase o no hubo cupo)", fecha)
+        notificar(cfg.notificar_url, f"Sin exito reservando para {fecha}")
+
+
 def secuencia_apertura(session: requests.Session, token: str, branch: dict, cfg: Config,
                        fecha: str, cands: list[dict]) -> dict | None:
     """Dispara la reserva del candidato principal a su hora exacta de apertura.
@@ -552,6 +634,11 @@ def main(argv=None) -> None:
     v.add_argument("--una-vez", action="store_true", dest="una_vez",
                    help="Ejecuta un solo ciclo y termina")
     v.set_defaults(fn=cmd_vigilar)
+
+    s = sub.add_parser("sesion", help="Reserva el proximo dia sin cubrir y se cierra (para tarea diaria)")
+    s.add_argument("--max-espera-min", type=float, default=150.0, dest="max_espera_min",
+                   help="Si la proxima apertura esta a mas de estos minutos, se cierra (por defecto 150)")
+    s.set_defaults(fn=cmd_sesion)
 
     z = sub.add_parser("cazar", help="Caza enfocada de una clase concreta para una fecha (espera cupo liberado)")
     z.add_argument("--fecha", required=True, help="Fecha de la clase, YYYY-MM-DD")

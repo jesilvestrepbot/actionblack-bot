@@ -99,20 +99,35 @@ python -m actionbot plan                   que reservaria el bot cada dia y a qu
 python -m actionbot login-test             prueba las credenciales del .env
 python -m actionbot reservas               tus reservas vigentes
 python -m actionbot reservar --fecha 2026-07-23 --hora 06:15 --clase SAVAGE [--esperar]
-python -m actionbot vigilar [--una-vez]    proceso continuo: aperturas exactas mas rescate
+python -m actionbot sesion                 reserva el proximo dia sin cubrir y se cierra (tarea diaria)
+python -m actionbot cazar --fecha F --clase C [--desde HH:MM --hasta HH:MM]   caza un cupo puntual
+python -m actionbot vigilar [--una-vez]    modo demonio 24/7 (alternativa, ya no es el recomendado)
 ```
 
-## Dejarlo corriendo en Windows
+## Como corre: tareas que se despiertan, reservan y se cierran
 
-`vigilar.bat` arranca el vigilante desde la carpeta del proyecto. Para que inicie solo al iniciar sesion en Windows:
+El bot NO corre 24/7. Se despierta cerca de la hora de apertura, hace la reserva, y se apaga. Task Scheduler de Windows es quien lo despierta.
 
+### Reserva diaria
+
+`sesion.bat` reserva el proximo dia sin cubrir y se cierra. Busca la apertura mas cercana; si esta cerca espera al segundo exacto y reserva con prioridad y fallbacks, y si esta lejos se cierra para que la tarea lo relance. Tarea que lo lanza cada dia a las 05:45 (cubre aperturas de 06:15 entre semana hasta 08:20 el sabado):
+
+```powershell
+$dir = "C:\Users\jesil\OneDrive\Documentos\Claude\Code\ActionBlack"
+$a = New-ScheduledTaskAction -Execute (Join-Path $dir "sesion.bat") -WorkingDirectory $dir
+$tr = New-ScheduledTaskTrigger -Daily -At "05:45"
+$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::FromHours(4))
+Register-ScheduledTask -TaskName "ActionBot-diario" -Action $a -Trigger $tr -Settings $s -Force
 ```
-schtasks /create /tn "ActionBot" /tr "\"C:\Users\jesil\OneDrive\Documentos\Claude\Code\ActionBlack\vigilar.bat\"" /sc onlogon
-```
+
+### Reserva especial puntual
+
+Para cazar una clase concreta que ya esta llena (esperar una cancelacion), `cazar` corre en bucle hasta conseguir cupo o hasta que empiece la clase, y se cierra. Se lanza con una tarea de una sola vez (`New-ScheduledTaskTrigger -Once -At <hora>`) apuntando a un .bat con el comando `cazar` de esa fecha/clase (ver `cazar_tonic_manana.bat` como ejemplo).
 
 Notas:
 
-- El equipo tiene que estar encendido y sin suspender, tambien de madrugada: las aperturas de las clases de 6 am son a las 6 am del dia anterior y el rescate corre toda la noche. Revisa las opciones de energia.
+- El equipo debe estar encendido y sin suspender a la hora de la tarea. Si duerme a las 05:45, Task Scheduler la ejecuta al despertar (`StartWhenAvailable`), pero si sigue dormido a la hora de la apertura se pierde. Manten el PC despierto en esa franja.
+- Los disparadores `-AtLogOn` y las opciones de reinicio automatico piden permisos de administrador; por eso se usa `-Daily`, que no los necesita.
 - Los lunes no hay TONIC en la franja 06:00 a 07:00 en PepeSierra, ese dia solo se intenta SAVAGE.
 - El log queda en `logs/actionbot.log` y el registro de reservas del bot en `logs/bot_reservas.json`.
 
