@@ -1,0 +1,18 @@
+# Los archivos que corren en Linux (VPS) deben quedar con saltos LF aunque se
+# editen en Windows. Los .bat son de Windows y van con CRLF.
+* text=auto
+
+*.py        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.txt       text eol=lf
+*.service   text eol=lf
+*.timer     text eol=lf
+*.example   text eol=lf
+Dockerfile  text eol=lf
+.dockerignore text eol=lf
+.gitignore  text eol=lf
+.env.example text eol=lf
+
+*.bat       text eol=crlf
