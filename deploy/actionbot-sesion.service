@@ -1,0 +1,18 @@
+# Servicio de una sola ejecucion: reserva el proximo dia y se cierra.
+# Lo dispara actionbot-sesion.timer. Modelo despertar-reservar-cerrar.
+#   sudo cp deploy/actionbot-sesion.* /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now actionbot-sesion.timer
+[Unit]
+Description=Sesion de reserva Action Black (reserva el proximo dia y termina)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=actionbot
+WorkingDirectory=/opt/actionbot
+Environment=TZ=America/Bogota
+EnvironmentFile=/opt/actionbot/.env
+ExecStart=/opt/actionbot/.venv/bin/python -m actionbot sesion --max-espera-min 200
+# La sesion puede esperar hasta la apertura (hasta ~2.5 h el fin de semana).
+TimeoutStartSec=4h

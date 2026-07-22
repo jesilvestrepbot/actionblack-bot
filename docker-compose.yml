@@ -1,0 +1,20 @@
+services:
+  actionbot:
+    build: .
+    image: actionbot:latest
+    container_name: actionbot
+    restart: unless-stopped
+    # Credenciales: crea .env con ACTION_EMAIL y ACTION_PASSWORD (no se sube a git).
+    env_file: .env
+    environment:
+      - TZ=America/Bogota
+    volumes:
+      # Persistencia del registro de reservas y logs. IMPRESCINDIBLE: si no
+      # persiste, tras un reinicio el bot no sabe que dias ya reservo.
+      - ./logs:/app/logs
+      # config.yaml editable sin reconstruir la imagen.
+      - ./config.yaml:/app/config.yaml:ro
+    # Por defecto corre el demonio (vigilar) definido en el Dockerfile.
+    # Para el modelo despertar-reservar-cerrar, deja que la VPS use cron o
+    # systemd (DEPLOY.md) en vez del demonio, o descomenta para una prueba:
+    # command: ["python", "-m", "actionbot", "login-test"]

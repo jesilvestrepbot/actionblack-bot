@@ -1,0 +1,10 @@
+# Alternativa con cron (modelo despertar-reservar-cerrar).
+# Instalar con:  crontab deploy/crontab.example   (ajusta la ruta /opt/actionbot)
+#
+# Colombia no tiene horario de verano, asi que 05:45 Bogota = 10:45 UTC fijo.
+# Opcion A: si tu cron respeta CRON_TZ (Vixie cron), usa hora de Bogota:
+CRON_TZ=America/Bogota
+45 5 * * * cd /opt/actionbot && .venv/bin/python -m actionbot sesion --max-espera-min 200 >> logs/cron.log 2>&1
+#
+# Opcion B: si tu cron NO respeta CRON_TZ y la VPS esta en UTC, usa 10:45 UTC:
+# 45 10 * * * cd /opt/actionbot && .venv/bin/python -m actionbot sesion --max-espera-min 200 >> logs/cron.log 2>&1

@@ -1,0 +1,21 @@
+# Demonio siempre vivo (modelo alternativo). Copia a /etc/systemd/system/
+# Ajusta WorkingDirectory y las rutas a donde clonaste el repo.
+#   sudo cp deploy/actionbot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now actionbot
+[Unit]
+Description=Bot de reservas Action Black (demonio vigilar)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=actionbot
+WorkingDirectory=/opt/actionbot
+Environment=TZ=America/Bogota
+EnvironmentFile=/opt/actionbot/.env
+ExecStart=/opt/actionbot/.venv/bin/python -m actionbot vigilar
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

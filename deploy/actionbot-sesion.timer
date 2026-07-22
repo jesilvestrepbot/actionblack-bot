@@ -1,0 +1,13 @@
+# Dispara la sesion de reserva cada dia a las 05:45 hora de Bogota.
+# Cubre las aperturas de 06:15 entre semana hasta 08:20 el sabado.
+[Unit]
+Description=Dispara la sesion diaria de reserva Action Black a las 05:45 Bogota
+
+[Timer]
+# Zona horaria explicita: independiente de la hora del sistema de la VPS.
+OnCalendar=*-*-* 05:45:00 America/Bogota
+# Si la VPS estaba apagada a esa hora, ejecuta al arrancar.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

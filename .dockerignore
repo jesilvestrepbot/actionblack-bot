@@ -1,0 +1,12 @@
+.git
+.gitignore
+.venv
+logs
+.env
+.env.example
+__pycache__
+**/__pycache__
+*.pyc
+*.bat
+README.md
+DEPLOY.md
