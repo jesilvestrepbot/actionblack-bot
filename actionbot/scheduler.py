@@ -158,7 +158,11 @@ def rafaga_reserva(session: requests.Session, token: str, activity: dict, branch
             ultimo = e
             if e.code in api.STOP_CODES:
                 return {"ok": False, "intentos": intentos, "error": e, "definitivo": True}
-            log.debug("Intento %s rechazado: %s", intentos, e)
+            if e.code in api.RETRY_EARLY_CODES:
+                if intentos == 1 or intentos % 20 == 0:
+                    log.info("Ventana aun no abre (intento %s, %s), insistiendo", intentos, e.code)
+            else:
+                log.debug("Intento %s rechazado: %s", intentos, e)
         except requests.RequestException as e:
             ultimo = e
             log.debug("Intento %s con error de red: %s", intentos, e)

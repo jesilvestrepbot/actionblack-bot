@@ -53,7 +53,7 @@ Detalles aprendidos del sistema:
 - Estados de una clase: `Available`, `Full`, `Finalized`, `Canceled`. Las clases pueden pasar a `Finalized` estando en el futuro (deja de ser reservable) y el gimnasio cancela clases con frecuencia.
 - El `activity_id` NO es unico por instancia: se repite entre dias y semanas. Siempre se combina con fecha y hora (`clave()` en scheduler.py).
 - La respuesta de mis reservas trae `spot_number` y `group_name`. A veces responde `total_items > 0` con `items` vacios; por eso el bot guarda su propio registro en `logs/bot_reservas.json` como respaldo.
-- Errores relevantes: `ACTIVITIES_OVERLAPPING` (ya tienes clase en ese horario, definitivo), `ACTIVITIES_SCHEDULE_VALIDATION_ERROR` (la ventana aun no abre, se reintenta), `MISSING_PARAMETER` e `INVALID_PARAMETER` (definitivos), `USER_BLOCKED_ERROR`.
+- Errores relevantes: `ACTIVITIES_OVERLAPPING` (ya tienes clase en ese horario, definitivo), `MISSING_PARAMETER` (falta un campo del payload, definitivo), `USER_BLOCKED_ERROR` (cuenta bloqueada). `INVALID_PARAMETER` NO es definitivo: la API lo devuelve cuando intentas reservar antes de que abra la ventana de 24 h (validado 2026-07-21 con el mismo payload que si funciona dentro de la ventana). Por eso se reintenta hasta que la ventana abre. Este es el mecanismo que hace posible disparar en el segundo exacto: el bot empieza unos segundos antes, recibe `INVALID_PARAMETER`, e insiste cada medio segundo hasta que entra.
 
 ## Instalacion
 

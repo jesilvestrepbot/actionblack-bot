@@ -26,12 +26,22 @@ BASE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
 }
 
-# Errores que no tiene sentido reintentar dentro de la rafaga
+# Errores que no tiene sentido reintentar dentro de la rafaga.
+# OJO: INVALID_PARAMETER NO va aqui. La API lo devuelve cuando se intenta
+# reservar antes de que abra la ventana de 24 h (validado 2026-07-21 con
+# el mismo payload que si funciona dentro de la ventana). Por eso debe
+# reintentarse: el bot dispara unos segundos antes de la apertura y tiene
+# que insistir hasta que la ventana abre en el segundo exacto.
 STOP_CODES = {
-    "ACTIVITIES_OVERLAPPING",
-    "USER_BLOCKED_ERROR",
-    "MISSING_PARAMETER",
+    "ACTIVITIES_OVERLAPPING",       # ya tienes una clase en ese horario
+    "USER_BLOCKED_ERROR",           # cuenta bloqueada
+    "MISSING_PARAMETER",            # falta un campo del payload, es un bug, no insistir
+}
+
+# Errores que significan "la ventana aun no abre", se reintenta hasta que abra
+RETRY_EARLY_CODES = {
     "INVALID_PARAMETER",
+    "ACTIVITIES_SCHEDULE_VALIDATION_ERROR",
 }
 
 
