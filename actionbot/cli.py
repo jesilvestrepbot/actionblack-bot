@@ -281,6 +281,106 @@ def cmd_reservar(args) -> None:
     sys.exit(0 if ok else 1)
 
 
+def cmd_cazar(args) -> None:
+    """Caza enfocada de una clase concreta para una fecha, franja horaria opcional.
+    Corre en bucle hasta conseguir cupo, hasta que pasen todas las clases del
+    rango, o hasta que lo detengan. Pensado para cuando la clase ya esta llena
+    y solo queda esperar a que alguien cancele. No toca el dia si ya tienes una
+    reserva (respeta una clase por dia): espera a que canceles la otra."""
+    cfg = cargar(args.config)
+    _requiere_credenciales(cfg)
+    session = api.new_session()
+    branch = _branch(session, cfg)
+    clase = args.clase.strip().upper()
+    desde = args.desde or "00:00"
+    hasta = args.hasta or "23:59"
+    intervalo = max(30.0, args.intervalo_min * 60)
+    tz = ZoneInfo(branch["timezone"])
+    log.info("Cazando %s para %s en franja %s-%s, sede %s. Reviso cada %g min",
+             clase, args.fecha, desde, hasta, branch["name"], args.intervalo_min)
+
+    token: str | None = None
+
+    def tok(forzar: bool = False) -> str:
+        nonlocal token
+        if token is None or forzar:
+            token, _ = api.login(session, cfg.email, cfg.password, branch)
+        return token
+
+    while True:
+        try:
+            acts = api.get_calendar(session, branch, args.fecha)
+            objetivos = sorted(
+                (a for a in acts
+                 if a["start_time"][:10] == args.fecha
+                 and a["activity_name"].strip().upper() == clase
+                 and desde <= a["start_time"][11:16] <= hasta
+                 and a.get("status_name") != "Canceled"),
+                key=lambda a: a["start_time"])
+            if not objetivos:
+                log.warning("No hay clases de %s en %s %s-%s, nada que cazar", clase, args.fecha, desde, hasta)
+                return
+            futuras = [a for a in objetivos if scheduler.parse_start(a) > datetime.now(tz)]
+            if not futuras:
+                log.warning("Ya pasaron todas las %s de %s, termino sin conseguir cupo", clase, args.fecha)
+                notificar(cfg.notificar_url, f"No se consiguio {clase} para {args.fecha}, ya pasaron todas")
+                return
+
+            # Cobertura del dia: NO nos fiamos del contador total_items, su
+            # endpoint es poco fiable (se queda pegado en 1 con lista vacia,
+            # incluso despues de cancelar). Solo respetamos "una clase por dia"
+            # si REALMENTE podemos ver una reserva de ese dia en la lista.
+            # Si no, vamos por la clase: el gimnasio solo rechaza (OVERLAPPING)
+            # cuando el horario se cruza con otra reserva, no por ser dos.
+            data = api.my_bookings(session, tok())
+            items = (data.get("items") or []) if isinstance(data, dict) else (data or [])
+            total = int(data.get("total_items") or 0) if isinstance(data, dict) else len(items)
+            mismo_dia = [it for it in items if isinstance(it, dict)
+                         and str(it.get("start_time"))[:10] == args.fecha
+                         and (it.get("status_name") or "").lower() == "booked"]
+            if mismo_dia:
+                otras = ", ".join(f'{it.get("activity_name")} {str(it.get("start_time"))[11:16]}' for it in mismo_dia)
+                log.info("Ya tienes clase ese dia (%s), respeto una por dia. No reservo, reviso en %g min",
+                         otras, args.intervalo_min)
+                time.sleep(intervalo)
+                continue
+            if total >= 1 and not items:
+                log.info("El contador del gimnasio dice %s reserva(s) pero no me deja verlas (bug de su endpoint). "
+                         "Voy por %s igual; solo se rechazaria si el horario se cruza con otra clase tuya", total, clase)
+
+            disponibles = [a for a in futuras
+                           if a.get("status_name") == "Available"
+                           and int(a.get("occupation") or 0) < int(a.get("capacity") or 0)]
+            if disponibles:
+                obj = disponibles[0]
+                log.info("Cupo detectado en %s (%s/%s), disparo reserva",
+                         _nombre(obj), obj["occupation"], obj["capacity"])
+                res = scheduler.rafaga_reserva(session, tok(), obj, branch, cfg, ventana_seg=20)
+                if res["ok"]:
+                    log.info("CAZADA: %s", _nombre(obj))
+                    registrar_bot_reserva(args.fecha, obj)
+                    notificar(cfg.notificar_url, f"Cazada {_nombre(obj)}")
+                    return
+                err = res.get("error")
+                if getattr(err, "code", "") == "ACTIVITIES_OVERLAPPING":
+                    log.warning("Tienes otra clase que cruza ese horario; cancela esa si quieres %s. Sigo revisando", clase)
+                else:
+                    log.warning("No entro (%s), sigo cazando", err)
+            else:
+                estados = ", ".join(f'{a["start_time"][11:16]} {a["occupation"]}/{a["capacity"]}' for a in futuras)
+                log.info("Aun sin cupo (%s). Reviso en %g min", estados, args.intervalo_min)
+            time.sleep(intervalo)
+        except api.ApiError as e:
+            if e.status in (401, 403):
+                tok(forzar=True)
+                continue
+            log.error("Error de API cazando: %s", e)
+            time.sleep(60)
+        except requests.RequestException as e:
+            log.error("Error de red cazando: %s", e)
+            time.sleep(60)
+
+
 def secuencia_apertura(session: requests.Session, token: str, branch: dict, cfg: Config,
                        fecha: str, cands: list[dict]) -> dict | None:
     """Dispara la reserva del candidato principal a su hora exacta de apertura.
@@ -452,6 +552,15 @@ def main(argv=None) -> None:
     v.add_argument("--una-vez", action="store_true", dest="una_vez",
                    help="Ejecuta un solo ciclo y termina")
     v.set_defaults(fn=cmd_vigilar)
+
+    z = sub.add_parser("cazar", help="Caza enfocada de una clase concreta para una fecha (espera cupo liberado)")
+    z.add_argument("--fecha", required=True, help="Fecha de la clase, YYYY-MM-DD")
+    z.add_argument("--clase", required=True, help="Nombre de la clase, ejemplo TONIC")
+    z.add_argument("--desde", help="Hora minima de inicio, HH:MM (por defecto 00:00)")
+    z.add_argument("--hasta", help="Hora maxima de inicio, HH:MM (por defecto 23:59)")
+    z.add_argument("--intervalo-min", type=float, default=5.0, dest="intervalo_min",
+                   help="Cada cuantos minutos revisar si se libero cupo (por defecto 5)")
+    z.set_defaults(fn=cmd_cazar)
 
     sub.add_parser("reservas", help="Lista tus reservas vigentes").set_defaults(fn=cmd_reservas)
     sub.add_parser("login-test", help="Prueba las credenciales del .env").set_defaults(fn=cmd_login_test)
