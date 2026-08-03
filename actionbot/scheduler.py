@@ -43,47 +43,32 @@ def calendario_dos_semanas(session: requests.Session, branch: dict) -> list[dict
     return sorted(vistos.values(), key=lambda a: a["start_time"])
 
 
-def es_festivo(fecha: str, weekday: int, cfg: Config) -> bool:
-    """Sabados, domingos y festivos declarados usan la franja de festivo."""
-    return weekday >= 5 or fecha in cfg.plan.festivos
-
-
 def candidatos_por_dia(activities: list[dict], cfg: Config) -> dict[str, list[dict]]:
-    """Para cada fecha del plan: las clases candidatas ordenadas por prioridad
-    y luego por hora. La franja depende del tipo de dia (normal o festivo).
-    Si un dia entre semana no tiene clases en la franja normal, se asume
-    horario de festivo no declarado y se usa la otra franja.
-    Excluye las canceladas; el estado fino (Available, Full, Finalized)
-    se filtra en cada uso."""
+    """Para cada fecha con plan: las clases objetivo de ese dia de la semana,
+    ordenadas por la preferencia declarada en plan_semanal. Solo cuentan las
+    clases cuya clase y hora coinciden exactamente con un objetivo del dia.
+    Los dias sin objetivos no aparecen. Excluye las canceladas."""
     plan = cfg.plan
-    crudos: dict[str, list[dict]] = {}
+    por_fecha: dict[str, list[tuple[int, dict]]] = {}
     for a in activities:
-        nombre = a["activity_name"].strip().upper()
-        if nombre not in plan.prioridad:
-            continue
         if a.get("status_name") == "Canceled":
             continue
-        start = parse_start(a)
-        if plan.dias and start.weekday() not in plan.dias:
+        wd = parse_start(a).weekday()
+        objetivos = plan.por_dia.get(wd)
+        if not objetivos:
             continue
-        crudos.setdefault(a["start_time"][:10], []).append(a)
+        nombre = a["activity_name"].strip().upper()
+        hora = _hhmm(a)
+        for i, obj in enumerate(objetivos):
+            if nombre == obj.clase and hora == obj.hora:
+                por_fecha.setdefault(a["start_time"][:10], []).append((i, a))
+                break
 
-    por_fecha: dict[str, list[dict]] = {}
-    for fecha, lista in crudos.items():
-        wd = parse_start(lista[0]).weekday()
-        franja = plan.entre_festivos if es_festivo(fecha, wd, cfg) else plan.entre
-        sel = [a for a in lista if franja[0] <= _hhmm(a) <= franja[1]]
-        if not sel and not es_festivo(fecha, wd, cfg):
-            sel = [a for a in lista
-                   if plan.entre_festivos[0] <= _hhmm(a) <= plan.entre_festivos[1]]
-            if sel:
-                log.info("El %s no tiene clases del plan en la franja normal, "
-                         "parece festivo, uso la franja de festivo", fecha)
-        if sel:
-            sel.sort(key=lambda x: (plan.prioridad.index(x["activity_name"].strip().upper()),
-                                    x["start_time"]))
-            por_fecha[fecha] = sel
-    return por_fecha
+    salida: dict[str, list[dict]] = {}
+    for fecha, lista in por_fecha.items():
+        lista.sort(key=lambda t: (t[0], t[1]["start_time"]))
+        salida[fecha] = [a for _, a in lista]
+    return salida
 
 
 def apertura_de(activity: dict, cfg: Config) -> datetime:

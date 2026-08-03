@@ -4,53 +4,30 @@ sede: PepeSierra
 # Horas antes del inicio de la clase en que se abre la reserva
 apertura_horas: 24
 
-# Una clase por dia: el bot recorre las clases en orden de prioridad
-# dentro de la franja y reserva la primera que logre.
-# Si el dia ya tiene una reserva (del bot o hecha a mano) no toca nada.
-# El calendario se consulta en vivo en cada ciclo, asi que los cambios
-# de horario de cada semana se recogen solos.
-plan_diario:
-  dias: [lun, mar, mie, jue, vie, sab, dom]
-  prioridad: [SAVAGE, TONIC]
-  entre: ["06:00", "07:00"]
-  # Sabados, domingos y festivos tienen otro horario en el gimnasio
-  entre_festivos: ["07:00", "09:00"]
+# Horario exacto por dia de la semana. Para cada dia, la clase y la hora
+# exactas que quieres. Puedes poner varias opciones por dia (lista) y se
+# intentan en orden hasta lograr una. Los dias que NO aparezcan aqui no se
+# reservan (el bot no los toca).
+#   dias validos: lun, mar, mie, jue, vie, sab, dom
+plan_semanal:
+  # martes lo reservas a mano, no esta aqui
+  mie:
+    - { clase: TONIC, hora: "12:10" }
+  jue:
+    - { clase: SAVAGE, hora: "09:55" }
+  vie:
+    - { clase: TONIC, hora: "06:15" }
 
-# Festivos de Colombia: esos dias se usa entre_festivos.
-# Revisar y completar cada ano. Si un festivo falta en la lista, el bot
-# igual lo detecta: al no haber clases en la franja normal de un dia
-# entre semana, pasa solo a la franja de festivo.
-festivos:
-  - 2026-08-07
-  - 2026-08-17
-  - 2026-10-12
-  - 2026-11-02
-  - 2026-11-16
-  - 2026-12-08
-  - 2026-12-25
-  - 2027-01-01
-  - 2027-01-11
-  - 2027-03-22
-  - 2027-03-25
-  - 2027-03-26
-  - 2027-05-01
-  - 2027-05-10
-  - 2027-05-31
-  - 2027-06-07
-  - 2027-07-05
-  - 2027-07-20
-
-# Si la apertura fallo (clase llena) o el gimnasio cancela tu reserva,
-# el bot sigue buscando cupo liberado cada intervalo_min minutos,
-# de dia y de noche, hasta la hora de inicio de la clase.
+# Si la apertura fallo o el gimnasio cancela, el bot sigue cazando cupo
+# liberado cada intervalo_min minutos hasta que empiece la clase.
 rescate:
   activo: true
   intervalo_min: 15
 
 # Ajustes del disparo
-adelanto_seg: 2        # margen en segundos con el que empieza a intentar antes de la apertura
+adelanto_seg: 2        # margen en segundos con que empieza a intentar antes de la apertura
 rafaga_seg: 120        # cuanto tiempo maximo seguir intentando tras la apertura
 intervalo_seg: 0.5     # pausa entre intentos
 
-# Opcional: avisos al celular. Sirve un topic de ntfy.sh:
+# Opcional: avisos al celular (ntfy.sh, etc.)
 # notificar_url: https://ntfy.sh/mi-topic-secreto

@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -33,12 +32,16 @@ def _parse_hhmm(h: str) -> str:
 
 
 @dataclass
-class PlanDiario:
-    dias: list[int] = field(default_factory=lambda: list(range(7)))
-    prioridad: list[str] = field(default_factory=list)
-    entre: tuple[str, str] = ("00:00", "23:59")
-    entre_festivos: tuple[str, str] = ("00:00", "23:59")
-    festivos: set[str] = field(default_factory=set)
+class ClaseObjetivo:
+    clase: str
+    hora: str  # "HH:MM"
+
+
+@dataclass
+class PlanSemanal:
+    # dia de la semana (0=lunes) -> opciones en orden de preferencia.
+    # Los dias que no esten aqui no se reservan.
+    por_dia: dict[int, list[ClaseObjetivo]] = field(default_factory=dict)
 
 
 @dataclass
@@ -51,7 +54,7 @@ class Rescate:
 class Config:
     sede: str
     apertura_horas: float
-    plan: PlanDiario
+    plan: PlanSemanal
     rescate: Rescate
     email: str
     password: str
@@ -71,31 +74,23 @@ def cargar(path: str | Path = "config.yaml") -> Config:
     email = os.environ.get("ACTION_EMAIL", "").strip()
     password = os.environ.get("ACTION_PASSWORD", "").strip()
 
-    plan_raw = raw.get("plan_diario") or {}
-    prioridad = [str(c).strip().upper() for c in (plan_raw.get("prioridad") or [])]
-    if not prioridad:
-        raise ValueError("config.yaml necesita plan_diario.prioridad con al menos una clase")
-    entre_raw = plan_raw.get("entre") or ["00:00", "23:59"]
-    if len(entre_raw) != 2:
-        raise ValueError('plan_diario.entre debe tener dos horas, ejemplo ["06:00", "07:00"]')
-    entre_fest_raw = plan_raw.get("entre_festivos") or entre_raw
-    if len(entre_fest_raw) != 2:
-        raise ValueError('plan_diario.entre_festivos debe tener dos horas, ejemplo ["07:00", "09:00"]')
-    festivos = set()
-    for f in raw.get("festivos") or []:
-        fecha = str(f).strip()[:10]
-        try:
-            datetime.strptime(fecha, "%Y-%m-%d")
-        except ValueError:
-            raise ValueError(f"Festivo invalido: {f}, usa formato YYYY-MM-DD")
-        festivos.add(fecha)
-    plan = PlanDiario(
-        dias=[_parse_dia(d) for d in (plan_raw.get("dias") or [])] or list(range(7)),
-        prioridad=prioridad,
-        entre=(_parse_hhmm(entre_raw[0]), _parse_hhmm(entre_raw[1])),
-        entre_festivos=(_parse_hhmm(entre_fest_raw[0]), _parse_hhmm(entre_fest_raw[1])),
-        festivos=festivos,
-    )
+    plan_raw = raw.get("plan_semanal") or {}
+    por_dia: dict[int, list[ClaseObjetivo]] = {}
+    for dia_str, opciones in plan_raw.items():
+        wd = _parse_dia(dia_str)
+        if isinstance(opciones, dict):
+            opciones = [opciones]
+        lista: list[ClaseObjetivo] = []
+        for o in opciones or []:
+            clase = str(o.get("clase") or "").strip().upper()
+            if not clase or not o.get("hora"):
+                raise ValueError(f"plan_semanal.{dia_str}: cada objetivo necesita clase y hora")
+            lista.append(ClaseObjetivo(clase=clase, hora=_parse_hhmm(o["hora"])))
+        if lista:
+            por_dia[wd] = lista
+    if not por_dia:
+        raise ValueError("config.yaml necesita plan_semanal con al menos un dia (ejemplo: mie: [{clase: TONIC, hora: '12:10'}])")
+    plan = PlanSemanal(por_dia=por_dia)
 
     rescate_raw = raw.get("rescate") or {}
     rescate = Rescate(

@@ -75,19 +75,19 @@ Edita `.env` con tu correo y contrasena de actionblack.co. Ese archivo queda fue
 ```yaml
 sede: PepeSierra
 apertura_horas: 24
-plan_diario:
-  dias: [lun, mar, mie, jue, vie, sab, dom]
-  prioridad: [SAVAGE, TONIC]
-  entre: ["06:00", "07:00"]
-  entre_festivos: ["07:00", "09:00"]
-festivos:
-  - 2026-08-07
+plan_semanal:
+  mie:
+    - { clase: TONIC, hora: "12:10" }
+  jue:
+    - { clase: SAVAGE, hora: "09:55" }
+  vie:
+    - { clase: TONIC, hora: "06:15" }
 rescate:
   activo: true
   intervalo_min: 15
 ```
 
-La franja `entre` es importante porque el gimnasio mueve los horarios unos minutos cada dia (la SAVAGE de la manana es 06:15, 06:20, 06:25 o 06:30 segun el dia). `entre_festivos` aplica sabados, domingos y los dias de la lista `festivos`, que hay que revisar cada ano.
+`plan_semanal` define la clase y hora exactas por dia de la semana. Los dias que no aparezcan no se reservan. Puedes poner varias opciones por dia (lista) y se intentan en orden de preferencia hasta lograr una. La apertura de cada clase es 24 h antes, a la misma hora: TONIC del miercoles 12:10 abre el martes 12:10, asi que la tarea programada dispara poco antes de cada apertura (no a una hora fija). Si el gimnasio mueve una clase unos minutos, `sesion` espera hasta la apertura real dentro de su margen.
 
 ## Comandos
 

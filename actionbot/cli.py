@@ -119,33 +119,21 @@ def cmd_horarios(args) -> None:
         mapa.setdefault(wd, {}).setdefault(nombre, set()).add(a["start_time"][11:16])
 
     print(f"Horarios de {branch['name']} segun las proximas dos semanas. * = objetivo del plan")
-    print(f"Franja entre semana {plan.entre[0]} a {plan.entre[1]}, "
-          f"fines de semana y festivos {plan.entre_festivos[0]} a {plan.entre_festivos[1]}")
     for wd in sorted(mapa):
-        franja = plan.entre_festivos if wd >= 5 else plan.entre
+        obj_set = {(o.clase, o.hora) for o in plan.por_dia.get(wd, [])}
         print(f"\n{DIAS_NOMBRES[wd]}")
         for clase in sorted(mapa[wd]):
             marcas = []
             for h in sorted(mapa[wd][clase]):
-                es_plan = (clase in plan.prioridad
-                           and wd in plan.dias
-                           and franja[0] <= h <= franja[1])
-                marcas.append(h + ("*" if es_plan else ""))
+                marcas.append(h + ("*" if (clase, h) in obj_set else ""))
             print(f"  {clase:10} {' '.join(marcas)}")
 
-    print("\nAperturas del plan: el bot dispara a la misma hora del dia anterior")
-    print("(en festivos entre semana aplica la franja de festivo, el bot lo resuelve solo)")
-    for wd in sorted(mapa):
-        if wd not in plan.dias:
-            continue
-        franja = plan.entre_festivos if wd >= 5 else plan.entre
-        for clase in plan.prioridad:
-            horas = sorted(h for h in mapa[wd].get(clase, set())
-                           if franja[0] <= h <= franja[1])
-            if horas:
-                previo = DIAS_NOMBRES[(wd - 1) % 7]
-                print(f"  {DIAS_NOMBRES[wd]:10} {clase:8} {horas[0]}  ->  disparo el {previo} a las {horas[0]}")
-                break
+    print("\nPlan semanal (dispara el dia anterior a la misma hora de la clase):")
+    for wd in sorted(plan.por_dia):
+        previo = DIAS_NOMBRES[(wd - 1) % 7]
+        for i, o in enumerate(plan.por_dia[wd]):
+            rol = "principal" if i == 0 else "fallback "
+            print(f"  {DIAS_NOMBRES[wd]:10} {rol} {o.clase:7} {o.hora}  ->  disparo el {previo} a las {o.hora}")
 
 
 def _cubierto_str(reserva: dict) -> str:
@@ -171,7 +159,9 @@ def cmd_plan(args) -> None:
             print(f"(no pude consultar tus reservas: {e})")
 
     ahora = datetime.now(timezone.utc)
-    print(f"Plan en {branch['name']}: una clase por dia, prioridad {' > '.join(cfg.plan.prioridad)}, franja {cfg.plan.entre[0]} a {cfg.plan.entre[1]}")
+    dias_txt = ", ".join(f"{DIAS_NOMBRES[wd][:3]} {'/'.join(o.clase + ' ' + o.hora for o in ops)}"
+                         for wd, ops in sorted(cfg.plan.por_dia.items()))
+    print(f"Plan en {branch['name']}: horario exacto por dia -> {dias_txt}")
     for fecha in sorted(por_fecha):
         cands = [c for c in por_fecha[fecha] if scheduler.parse_start(c) > ahora]
         if not cands:
