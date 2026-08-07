@@ -281,13 +281,51 @@ def cmd_cazar(args) -> None:
     _requiere_credenciales(cfg)
     session = api.new_session()
     branch = _branch(session, cfg)
-    clase = args.clase.strip().upper()
-    desde = args.desde or "00:00"
-    hasta = args.hasta or "23:59"
     intervalo = max(30.0, args.intervalo_min * 60)
     tz = ZoneInfo(branch["timezone"])
-    log.info("Cazando %s para %s en franja %s-%s, sede %s. Reviso cada %g min",
-             clase, args.fecha, desde, hasta, branch["name"], args.intervalo_min)
+
+    # Dos modos: objetivos exactos (CLASE:HH:MM, en orden de preferencia) o
+    # una clase en una franja horaria.
+    objetivos_spec: list[tuple[str, str]] | None = None
+    if getattr(args, "objetivo", None):
+        objetivos_spec = []
+        for spec in args.objetivo:
+            partes = spec.split(":")
+            if len(partes) < 3 or not partes[1].isdigit() or not partes[2].isdigit():
+                sys.exit(f"--objetivo invalido: {spec}. Usa CLASE:HH:MM, ejemplo TONIC:08:15")
+            objetivos_spec.append((partes[0].strip().upper(), f"{int(partes[1]):02d}:{int(partes[2]):02d}"))
+        descr = " > ".join(f"{c} {h}" for c, h in objetivos_spec)
+    else:
+        if not args.clase:
+            sys.exit("Falta --clase (o usa --objetivo CLASE:HH:MM, repetible)")
+        clase = args.clase.strip().upper()
+        desde = args.desde or "00:00"
+        hasta = args.hasta or "23:59"
+        descr = f"{clase} {desde}-{hasta}"
+
+    log.info("Cazando %s para %s, sede %s. Reviso cada %g min",
+             descr, args.fecha, branch["name"], args.intervalo_min)
+
+    def candidatos(acts: list[dict]) -> list[dict]:
+        """Clases objetivo del dia, en orden de preferencia."""
+        if objetivos_spec is not None:
+            orden: list[tuple[int, dict]] = []
+            for pri, (cl, hr) in enumerate(objetivos_spec):
+                for a in acts:
+                    if (a["start_time"][:10] == args.fecha
+                            and a["activity_name"].strip().upper() == cl
+                            and a["start_time"][11:16] == hr
+                            and a.get("status_name") != "Canceled"):
+                        orden.append((pri, a))
+            orden.sort(key=lambda t: t[0])
+            return [a for _, a in orden]
+        objs = [a for a in acts
+                if a["start_time"][:10] == args.fecha
+                and a["activity_name"].strip().upper() == clase
+                and desde <= a["start_time"][11:16] <= hasta
+                and a.get("status_name") != "Canceled"]
+        objs.sort(key=lambda a: a["start_time"])
+        return objs
 
     token: str | None = None
 
@@ -300,20 +338,14 @@ def cmd_cazar(args) -> None:
     while True:
         try:
             acts = api.get_calendar(session, branch, args.fecha)
-            objetivos = sorted(
-                (a for a in acts
-                 if a["start_time"][:10] == args.fecha
-                 and a["activity_name"].strip().upper() == clase
-                 and desde <= a["start_time"][11:16] <= hasta
-                 and a.get("status_name") != "Canceled"),
-                key=lambda a: a["start_time"])
+            objetivos = candidatos(acts)
             if not objetivos:
-                log.warning("No hay clases de %s en %s %s-%s, nada que cazar", clase, args.fecha, desde, hasta)
+                log.warning("No hay clases objetivo (%s) en %s, nada que cazar", descr, args.fecha)
                 return
             futuras = [a for a in objetivos if scheduler.parse_start(a) > datetime.now(tz)]
             if not futuras:
-                log.warning("Ya pasaron todas las %s de %s, termino sin conseguir cupo", clase, args.fecha)
-                notificar(cfg.notificar_url, f"No se consiguio {clase} para {args.fecha}, ya pasaron todas")
+                log.warning("Ya pasaron todas las clases objetivo de %s, termino sin conseguir cupo", args.fecha)
+                notificar(cfg.notificar_url, f"No se consiguio clase para {args.fecha}, ya pasaron todas")
                 return
 
             # Cobertura del dia: NO nos fiamos del contador total_items, su
@@ -336,7 +368,7 @@ def cmd_cazar(args) -> None:
                 continue
             if total >= 1 and not items:
                 log.info("El contador del gimnasio dice %s reserva(s) pero no me deja verlas (bug de su endpoint). "
-                         "Voy por %s igual; solo se rechazaria si el horario se cruza con otra clase tuya", total, clase)
+                         "Voy por la clase igual; solo se rechazaria si el horario se cruza con otra clase tuya", total)
 
             disponibles = [a for a in futuras
                            if a.get("status_name") == "Available"
@@ -353,11 +385,11 @@ def cmd_cazar(args) -> None:
                     return
                 err = res.get("error")
                 if getattr(err, "code", "") == "ACTIVITIES_OVERLAPPING":
-                    log.warning("Tienes otra clase que cruza ese horario; cancela esa si quieres %s. Sigo revisando", clase)
+                    log.warning("Tienes otra clase que cruza ese horario; cancela esa si la quieres. Sigo revisando")
                 else:
                     log.warning("No entro (%s), sigo cazando", err)
             else:
-                estados = ", ".join(f'{a["start_time"][11:16]} {a["occupation"]}/{a["capacity"]}' for a in futuras)
+                estados = ", ".join(f'{a["activity_name"]} {a["start_time"][11:16]} {a["occupation"]}/{a["capacity"]}' for a in futuras)
                 log.info("Aun sin cupo (%s). Reviso en %g min", estados, args.intervalo_min)
             time.sleep(intervalo)
         except api.ApiError as e:
@@ -630,11 +662,14 @@ def main(argv=None) -> None:
                    help="Si la proxima apertura esta a mas de estos minutos, se cierra (por defecto 150)")
     s.set_defaults(fn=cmd_sesion)
 
-    z = sub.add_parser("cazar", help="Caza enfocada de una clase concreta para una fecha (espera cupo liberado)")
+    z = sub.add_parser("cazar", help="Caza enfocada de clases para una fecha (espera cupo liberado)")
     z.add_argument("--fecha", required=True, help="Fecha de la clase, YYYY-MM-DD")
-    z.add_argument("--clase", required=True, help="Nombre de la clase, ejemplo TONIC")
-    z.add_argument("--desde", help="Hora minima de inicio, HH:MM (por defecto 00:00)")
-    z.add_argument("--hasta", help="Hora maxima de inicio, HH:MM (por defecto 23:59)")
+    z.add_argument("--objetivo", action="append",
+                   help="Objetivo exacto CLASE:HH:MM, repetible en orden de preferencia. "
+                        "Ej: --objetivo TONIC:08:15 --objetivo SAVAGE:07:15")
+    z.add_argument("--clase", help="Modo simple: nombre de clase (usa --desde/--hasta). Alternativa a --objetivo")
+    z.add_argument("--desde", help="Hora minima de inicio, HH:MM (modo --clase)")
+    z.add_argument("--hasta", help="Hora maxima de inicio, HH:MM (modo --clase)")
     z.add_argument("--intervalo-min", type=float, default=5.0, dest="intervalo_min",
                    help="Cada cuantos minutos revisar si se libero cupo (por defecto 5)")
     z.set_defaults(fn=cmd_cazar)

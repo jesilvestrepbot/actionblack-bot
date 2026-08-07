@@ -17,6 +17,10 @@ plan_semanal:
     - { clase: SAVAGE, hora: "09:55" }
   vie:
     - { clase: TONIC, hora: "06:15" }
+  sab:
+    - { clase: TONIC, hora: "07:10" }
+  dom:
+    - { clase: SAVAGE, hora: "07:15" }
 
 # Si la apertura fallo o el gimnasio cancela, el bot sigue cazando cupo
 # liberado cada intervalo_min minutos hasta que empiece la clase.
