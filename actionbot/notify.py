@@ -46,25 +46,29 @@ def notificar(url: str | None, mensaje: str) -> None:
         pass
 
 
-def notificar_email(destinatario: str | None, asunto: str, cuerpo: str) -> None:
-    """Envia el aviso por correo con Gmail SMTP. La contrasena de aplicacion
-    va en la variable de entorno SMTP_PASS. Si falta, no hace nada."""
-    pw = os.environ.get("SMTP_PASS", "").strip()
-    if not destinatario or not pw:
-        return
+def notificar_email(destinatario: str | None, asunto: str, cuerpo: str) -> bool:
+    """Envia el aviso con Gmail, igual que el proyecto inversiones:
+    variables GMAIL_USER y GMAIL_APP_PASSWORD (contrasena de aplicacion),
+    SMTP_SSL puerto 465. Acepta SMTP_PASS como alias del password.
+    Si faltan credenciales no hace nada."""
+    user = os.environ.get("GMAIL_USER", "").strip() or (destinatario or "").strip()
+    pw = (os.environ.get("GMAIL_APP_PASSWORD") or os.environ.get("SMTP_PASS") or "").strip()
+    if not destinatario or not user or not pw:
+        return False
     msg = EmailMessage()
     msg["Subject"] = asunto
-    msg["From"] = destinatario
+    msg["From"] = f"ActionBot <{user}>"
     msg["To"] = destinatario
     msg.set_content(cuerpo)
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as srv:
-            srv.starttls()
-            srv.login(destinatario, pw)
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as srv:
+            srv.login(user, pw)
             srv.send_message(msg)
         log.info("Aviso enviado por correo a %s", destinatario)
+        return True
     except Exception as e:
-        log.warning("No pude enviar el correo (%s). Revisa SMTP_PASS y la contrasena de aplicacion.", e)
+        log.warning("No pude enviar el correo (%s). Revisa GMAIL_APP_PASSWORD en el .env.", e)
+        return False
 
 
 def avisar(cfg, mensaje: str) -> None:

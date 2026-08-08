@@ -15,7 +15,7 @@ import requests
 
 from . import api, scheduler
 from .config import Config, cargar
-from .notify import avisar, configurar_logging
+from .notify import avisar, configurar_logging, notificar_email
 
 log = logging.getLogger("actionbot")
 
@@ -194,6 +194,18 @@ def cmd_login_test(args) -> None:
         print(json.dumps(resumen, indent=2, ensure_ascii=False, default=str))
 
 
+def cmd_probar_correo(args) -> None:
+    cfg = cargar(args.config)
+    if not cfg.notificar_email:
+        sys.exit("config.yaml no tiene notificar_email")
+    ok = notificar_email(cfg.notificar_email, "ActionBot: prueba de correo",
+                         "Los avisos del bot de reservas estan funcionando.")
+    if ok:
+        print(f"Correo de prueba enviado a {cfg.notificar_email}, revisa la bandeja")
+    else:
+        sys.exit("No se envio. Falta GMAIL_APP_PASSWORD en el .env (contrasena de aplicacion de Gmail) o fallo el envio, revisa el log")
+
+
 def cmd_reservas(args) -> None:
     cfg = cargar(args.config)
     _requiere_credenciales(cfg)
@@ -206,30 +218,52 @@ def cmd_reservas(args) -> None:
 
 def ejecutar_reserva(session: requests.Session, token: str, activity: dict, branch: dict,
                      cfg: Config, esperar_apertura: bool, ventana_seg: float | None = None) -> bool:
+    nombre = _nombre(activity)
+    open_at = scheduler.apertura_de(activity, cfg)
+    offset = timedelta(0)
     if esperar_apertura:
-        open_at = scheduler.apertura_de(activity, cfg)
         offset = scheduler.clock_offset(session)
         log.info("Offset del reloj frente al servidor: %+.1f s", offset.total_seconds())
         objetivo = open_at - timedelta(seconds=cfg.adelanto_seg)
         falta = (objetivo - scheduler.ahora_corregida(offset)).total_seconds()
         if falta > 0:
-            log.info("Esperando la apertura de %s (faltan %.0f s)", _nombre(activity), falta)
+            log.info("Esperando la apertura de %s (faltan %.0f s)", nombre, falta)
             scheduler.esperar_hasta(objetivo, offset)
 
     if scheduler.ya_reservada(session, token, activity):
-        log.info("La clase %s ya estaba reservada", _nombre(activity))
+        log.info("La clase %s ya estaba reservada", nombre)
         return True
 
-    log.info("Disparando reserva de %s", _nombre(activity))
+    log.info("Disparando reserva de %s", nombre)
     res = scheduler.rafaga_reserva(session, token, activity, branch, cfg, ventana_seg=ventana_seg)
-    nombre = _nombre(activity)
+
+    # Cuenta penalizada: el gimnasio bloquea los primeros 5 minutos de la
+    # ventana de reserva. Se espera a que pase la sancion y se reintenta.
+    if not res["ok"] and getattr(res.get("error"), "code", "") == "USER_PENALIZED_ERROR":
+        reintento = open_at + timedelta(minutes=5, seconds=4)
+        margen = (reintento - scheduler.ahora_corregida(offset)).total_seconds()
+        if margen > -600:
+            if margen > 0:
+                log.info("Cuenta penalizada: bloqueo de los primeros 5 min de la ventana. "
+                         "Reintento en %.0f s", margen)
+                scheduler.esperar_hasta(reintento, offset)
+            log.info("Reintento tras la sancion de 5 min: %s", nombre)
+            res = scheduler.rafaga_reserva(session, token, activity, branch, cfg, ventana_seg=40)
+
     if res["ok"]:
         log.info("RESERVA OK en %s intentos: %s", res["intentos"], nombre)
         confirmada = scheduler.ya_reservada(session, token, activity)
         log.info("Verificacion en mis reservas: %s", "confirmada" if confirmada else "aun no aparece")
         avisar(cfg, f"Reserva OK: {nombre}")
         return True
-    log.warning("Reserva fallida tras %s intentos: %s", res["intentos"], res.get("error"))
+
+    err = res.get("error")
+    log.warning("Reserva fallida tras %s intentos: %s", res["intentos"], err)
+    codigo = getattr(err, "code", "")
+    if codigo == "USER_PENALIZED_ERROR":
+        avisar(cfg, f"No se pudo reservar {nombre}: la cuenta sigue penalizada despues de los 5 min")
+    elif codigo == "NO_AVAILABLE_SLOTS":
+        avisar(cfg, f"No se pudo reservar {nombre}: la clase se lleno (la sancion de 5 min dejo pasar los cupos)")
     return False
 
 
@@ -675,6 +709,7 @@ def main(argv=None) -> None:
 
     sub.add_parser("reservas", help="Lista tus reservas vigentes").set_defaults(fn=cmd_reservas)
     sub.add_parser("login-test", help="Prueba las credenciales del .env").set_defaults(fn=cmd_login_test)
+    sub.add_parser("probar-correo", help="Envia un correo de prueba con la config actual").set_defaults(fn=cmd_probar_correo)
 
     args = p.parse_args(argv)
     configurar_logging()
