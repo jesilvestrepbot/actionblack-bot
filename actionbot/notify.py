@@ -1,12 +1,17 @@
-"""Logging a consola y archivo, mas aviso opcional por webhook (ntfy, etc.)."""
+"""Logging a consola y archivo, mas avisos opcionales por correo y webhook."""
 
 from __future__ import annotations
 
 import logging
 import logging.handlers
+import os
+import smtplib
+from email.message import EmailMessage
 from pathlib import Path
 
 import requests
+
+log = logging.getLogger("actionbot")
 
 
 def configurar_logging(carpeta: str = "logs", nivel_consola: int = logging.INFO) -> logging.Logger:
@@ -39,3 +44,30 @@ def notificar(url: str | None, mensaje: str) -> None:
         requests.post(url, data=mensaje.encode("utf-8"), timeout=8)
     except requests.RequestException:
         pass
+
+
+def notificar_email(destinatario: str | None, asunto: str, cuerpo: str) -> None:
+    """Envia el aviso por correo con Gmail SMTP. La contrasena de aplicacion
+    va en la variable de entorno SMTP_PASS. Si falta, no hace nada."""
+    pw = os.environ.get("SMTP_PASS", "").strip()
+    if not destinatario or not pw:
+        return
+    msg = EmailMessage()
+    msg["Subject"] = asunto
+    msg["From"] = destinatario
+    msg["To"] = destinatario
+    msg.set_content(cuerpo)
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as srv:
+            srv.starttls()
+            srv.login(destinatario, pw)
+            srv.send_message(msg)
+        log.info("Aviso enviado por correo a %s", destinatario)
+    except Exception as e:
+        log.warning("No pude enviar el correo (%s). Revisa SMTP_PASS y la contrasena de aplicacion.", e)
+
+
+def avisar(cfg, mensaje: str) -> None:
+    """Manda el aviso por todos los canales configurados (correo y webhook)."""
+    notificar_email(getattr(cfg, "notificar_email", None), "ActionBot reservas", mensaje)
+    notificar(getattr(cfg, "notificar_url", None), mensaje)

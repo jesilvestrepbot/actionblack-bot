@@ -62,6 +62,7 @@ class Config:
     rafaga_seg: float = 120.0
     intervalo_seg: float = 0.5
     notificar_url: str | None = None
+    notificar_email: str | None = None
 
 
 def cargar(path: str | Path = "config.yaml") -> Config:
@@ -113,4 +114,5 @@ def cargar(path: str | Path = "config.yaml") -> Config:
         rafaga_seg=float(raw.get("rafaga_seg", 120)),
         intervalo_seg=float(raw.get("intervalo_seg", 0.5)),
         notificar_url=(raw.get("notificar_url") or None),
+        notificar_email=(str(raw.get("notificar_email")).strip() if raw.get("notificar_email") else None),
     )

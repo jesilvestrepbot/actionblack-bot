@@ -15,7 +15,7 @@ import requests
 
 from . import api, scheduler
 from .config import Config, cargar
-from .notify import configurar_logging, notificar
+from .notify import avisar, configurar_logging
 
 log = logging.getLogger("actionbot")
 
@@ -227,7 +227,7 @@ def ejecutar_reserva(session: requests.Session, token: str, activity: dict, bran
         log.info("RESERVA OK en %s intentos: %s", res["intentos"], nombre)
         confirmada = scheduler.ya_reservada(session, token, activity)
         log.info("Verificacion en mis reservas: %s", "confirmada" if confirmada else "aun no aparece")
-        notificar(cfg.notificar_url, f"Reserva OK: {nombre}")
+        avisar(cfg, f"Reserva OK: {nombre}")
         return True
     log.warning("Reserva fallida tras %s intentos: %s", res["intentos"], res.get("error"))
     return False
@@ -267,7 +267,7 @@ def cmd_reservar(args) -> None:
     if ok:
         registrar_bot_reserva(a["start_time"][:10], a)
     else:
-        notificar(cfg.notificar_url, f"Reserva FALLIDA: {_nombre(a)}")
+        avisar(cfg, f"Reserva FALLIDA: {_nombre(a)}")
     sys.exit(0 if ok else 1)
 
 
@@ -345,7 +345,7 @@ def cmd_cazar(args) -> None:
             futuras = [a for a in objetivos if scheduler.parse_start(a) > datetime.now(tz)]
             if not futuras:
                 log.warning("Ya pasaron todas las clases objetivo de %s, termino sin conseguir cupo", args.fecha)
-                notificar(cfg.notificar_url, f"No se consiguio clase para {args.fecha}, ya pasaron todas")
+                avisar(cfg, f"No se consiguio clase para {args.fecha}, ya pasaron todas")
                 return
 
             # Cobertura del dia: NO nos fiamos del contador total_items, su
@@ -381,7 +381,7 @@ def cmd_cazar(args) -> None:
                 if res["ok"]:
                     log.info("CAZADA: %s", _nombre(obj))
                     registrar_bot_reserva(args.fecha, obj)
-                    notificar(cfg.notificar_url, f"Cazada {_nombre(obj)}")
+                    avisar(cfg, f"Cazada {_nombre(obj)}")
                     return
                 err = res.get("error")
                 if getattr(err, "code", "") == "ACTIVITIES_OVERLAPPING":
@@ -479,10 +479,10 @@ def cmd_sesion(args) -> None:
     if ganada:
         registrar_bot_reserva(fecha, ganada)
         log.info("Sesion completada, reservado: %s", _nombre(ganada))
-        notificar(cfg.notificar_url, f"Reserva OK: {_nombre(ganada)}")
+        avisar(cfg, f"Reserva OK: {_nombre(ganada)}")
     else:
         log.warning("Sesion sin exito para %s (se cerro la clase o no hubo cupo)", fecha)
-        notificar(cfg.notificar_url, f"Sin exito reservando para {fecha}")
+        avisar(cfg, f"Sin exito reservando para {fecha}")
 
 
 def secuencia_apertura(session: requests.Session, token: str, branch: dict, cfg: Config,
@@ -500,7 +500,7 @@ def secuencia_apertura(session: requests.Session, token: str, branch: dict, cfg:
         if ejecutar_reserva(session, token, c, branch, cfg, esperar_apertura=True, ventana_seg=45):
             return c
     log.warning("El %s no se logro ninguna clase en la apertura, pasa al rescate", fecha)
-    notificar(cfg.notificar_url, f"Apertura fallida el {fecha}, el bot queda buscando cupos liberados")
+    avisar(cfg, f"Apertura fallida el {fecha}, el bot queda buscando cupos liberados")
     return None
 
 
@@ -559,8 +559,7 @@ def cmd_vigilar(args) -> None:
                         # la cancelaron, vuelve a buscar clase para ese dia
                         log.warning("La reserva del %s (%s) ya no aparece, la cancelaron, vuelvo a buscar",
                                     fecha, bot_res[fecha].get("clase"))
-                        notificar(cfg.notificar_url,
-                                  f"Cancelaron tu reserva del {fecha}, el bot vuelve a buscar cupo")
+                        avisar(cfg, f"Cancelaron tu reserva del {fecha}, el bot vuelve a buscar cupo")
                         bot_res.pop(fecha)
                         guardar_bot_reservas(bot_res)
                         cubiertos_avisados.discard(fecha)

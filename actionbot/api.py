@@ -35,6 +35,7 @@ BASE_HEADERS = {
 STOP_CODES = {
     "ACTIVITIES_OVERLAPPING",       # ya tienes una clase en ese horario
     "USER_BLOCKED_ERROR",           # cuenta bloqueada
+    "USER_PENALIZED_ERROR",         # penalizado (no-show); no se levanta en la rafaga
     "MISSING_PARAMETER",            # falta un campo del payload, es un bug, no insistir
 }
 

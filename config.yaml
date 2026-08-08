@@ -4,17 +4,19 @@ sede: PepeSierra
 # Horas antes del inicio de la clase en que se abre la reserva
 apertura_horas: 24
 
-# Horario exacto por dia de la semana. Para cada dia, la clase y la hora
-# exactas que quieres. Puedes poner varias opciones por dia (lista) y se
-# intentan en orden hasta lograr una. Los dias que NO aparezcan aqui no se
-# reservan (el bot no los toca).
+# Horario exacto por dia de la semana. Para cada dia, la clase y hora exactas.
+# Puedes poner varias opciones por dia (lista) y se intentan en orden hasta
+# lograr una. Los dias que NO aparezcan no se reservan.
 #   dias validos: lun, mar, mie, jue, vie, sab, dom
 plan_semanal:
-  # martes lo reservas a mano, no esta aqui
+  lun:
+    - { clase: TONIC, hora: "11:00" }
+  mar:
+    - { clase: SAVAGE, hora: "08:40" }
   mie:
-    - { clase: TONIC, hora: "12:10" }
+    - { clase: SAVAGE, hora: "10:00" }
   jue:
-    - { clase: SAVAGE, hora: "09:55" }
+    - { clase: TONIC, hora: "10:00" }
   vie:
     - { clase: TONIC, hora: "06:15" }
   sab:
@@ -29,9 +31,14 @@ rescate:
   intervalo_min: 15
 
 # Ajustes del disparo
-adelanto_seg: 2        # margen en segundos con que empieza a intentar antes de la apertura
-rafaga_seg: 120        # cuanto tiempo maximo seguir intentando tras la apertura
-intervalo_seg: 0.5     # pausa entre intentos
+adelanto_seg: 2
+rafaga_seg: 120
+intervalo_seg: 0.5
 
-# Opcional: avisos al celular (ntfy.sh, etc.)
+# Aviso por correo. Usa Gmail: necesitas una CONTRASENA DE APLICACION
+# (myaccount.google.com -> Seguridad -> Verificacion en 2 pasos ->
+# Contrasenas de aplicaciones) y la guardas en .env como SMTP_PASS.
+notificar_email: jesilvestrep@gmail.com
+
+# Opcional: webhook (ntfy.sh, etc.)
 # notificar_url: https://ntfy.sh/mi-topic-secreto
