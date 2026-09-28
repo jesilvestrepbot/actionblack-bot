@@ -396,10 +396,13 @@ def cmd_cazar(args) -> None:
                          and (it.get("status_name") or "").lower() == "booked"]
             if mismo_dia:
                 otras = ", ".join(f'{it.get("activity_name")} {str(it.get("start_time"))[11:16]}' for it in mismo_dia)
-                log.info("Ya tienes clase ese dia (%s), respeto una por dia. No reservo, reviso en %g min",
-                         otras, args.intervalo_min)
-                time.sleep(intervalo)
-                continue
+                if not args.permitir_otra:
+                    log.info("Ya tienes clase ese dia (%s), respeto una por dia. No reservo, reviso en %g min",
+                             otras, args.intervalo_min)
+                    time.sleep(intervalo)
+                    continue
+                log.info("Ya tienes clase ese dia (%s); sigo cazando igual (--permitir-otra). "
+                         "Si entra, cancela la otra en la app", otras)
             if total >= 1 and not items:
                 log.info("El contador del gimnasio dice %s reserva(s) pero no me deja verlas (bug de su endpoint). "
                          "Voy por la clase igual; solo se rechazaria si el horario se cruza con otra clase tuya", total)
@@ -705,6 +708,8 @@ def main(argv=None) -> None:
     z.add_argument("--hasta", help="Hora maxima de inicio, HH:MM (modo --clase)")
     z.add_argument("--intervalo-min", type=float, default=5.0, dest="intervalo_min",
                    help="Cada cuantos minutos revisar si se libero cupo (por defecto 5)")
+    z.add_argument("--permitir-otra", action="store_true", dest="permitir_otra",
+                   help="Caza aunque ya tengas otra clase ese dia (luego cancelas la que sobre)")
     z.set_defaults(fn=cmd_cazar)
 
     sub.add_parser("reservas", help="Lista tus reservas vigentes").set_defaults(fn=cmd_reservas)
