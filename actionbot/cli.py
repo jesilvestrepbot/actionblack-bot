@@ -369,6 +369,9 @@ def cmd_cazar(args) -> None:
             token, _ = api.login(session, cfg.email, cfg.password, branch)
         return token
 
+    # Avisos informativos que se repetirian en cada ciclo: se registran una sola vez
+    avisos_hechos: set[str] = set()
+
     while True:
         try:
             acts = api.get_calendar(session, branch, args.fecha)
@@ -401,11 +404,14 @@ def cmd_cazar(args) -> None:
                              otras, args.intervalo_min)
                     time.sleep(intervalo)
                     continue
-                log.info("Ya tienes clase ese dia (%s); sigo cazando igual (--permitir-otra). "
-                         "Si entra, cancela la otra en la app", otras)
-            if total >= 1 and not items:
-                log.info("El contador del gimnasio dice %s reserva(s) pero no me deja verlas (bug de su endpoint). "
-                         "Voy por la clase igual; solo se rechazaria si el horario se cruza con otra clase tuya", total)
+                if "otra" not in avisos_hechos:
+                    log.info("Ya tienes clase ese dia (%s); sigo cazando igual (--permitir-otra). "
+                             "Si entra, cancela la otra en la app", otras)
+                    avisos_hechos.add("otra")
+            if total >= 1 and not items and "contador" not in avisos_hechos:
+                log.info("El contador del gimnasio dice %s reserva(s) pero no me deja verlas (bug de su endpoint, "
+                         "no es un error del bot). Voy por la clase igual", total)
+                avisos_hechos.add("contador")
 
             disponibles = [a for a in futuras
                            if a.get("status_name") == "Available"

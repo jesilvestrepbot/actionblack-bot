@@ -6,6 +6,7 @@ import logging
 import logging.handlers
 import os
 import smtplib
+import sys
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -22,10 +23,12 @@ def configurar_logging(carpeta: str = "logs", nivel_consola: int = logging.INFO)
         return log
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 
-    consola = logging.StreamHandler()
-    consola.setLevel(nivel_consola)
-    consola.setFormatter(fmt)
-    log.addHandler(consola)
+    # Con pythonw.exe (tarea oculta, sin ventana) no hay consola: solo archivo
+    if sys.stderr is not None:
+        consola = logging.StreamHandler()
+        consola.setLevel(nivel_consola)
+        consola.setFormatter(fmt)
+        log.addHandler(consola)
 
     archivo = logging.handlers.RotatingFileHandler(
         Path(carpeta) / "actionbot.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
