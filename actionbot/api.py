@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 EXP_BASE = "https://prod.action-exp-api.com/api/v1"
 CLOUD_BASE = "https://action-cloud.com/v1"
@@ -74,6 +76,15 @@ def _check(resp: requests.Response) -> None:
 def new_session() -> requests.Session:
     s = requests.Session()
     s.headers.update(BASE_HEADERS)
+    # El servidor cierra las conexiones keep-alive inactivas a los ~60 s; si
+    # se reutiliza justo en ese instante llega RemoteDisconnected. Los GET se
+    # reintentan solos con conexion nueva. Los POST (login, reserva) no.
+    reintentos = Retry(total=3, connect=3, read=2, backoff_factor=0.5,
+                       status_forcelist=(502, 503, 504), allowed_methods=frozenset({"GET"}),
+                       raise_on_status=False)
+    adaptador = HTTPAdapter(max_retries=reintentos)
+    s.mount("https://", adaptador)
+    s.mount("http://", adaptador)
     return s
 
 

@@ -442,7 +442,7 @@ def cmd_cazar(args) -> None:
             log.error("Error de API cazando: %s", e)
             time.sleep(60)
         except requests.RequestException as e:
-            log.error("Error de red cazando: %s", e)
+            log.warning("Fallo de red pasajero con el gimnasio (%s). Sigo cazando, reintento en 60 s", e)
             time.sleep(60)
 
 
