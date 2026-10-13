@@ -39,6 +39,7 @@ STOP_CODES = {
     "USER_BLOCKED_ERROR",           # cuenta bloqueada
     "USER_PENALIZED_ERROR",         # penalizado (no-show); no se levanta en la rafaga
     "MISSING_PARAMETER",            # falta un campo del payload, es un bug, no insistir
+    "PAST_EVENT_CHANGE_DENIED",     # la clase ya paso, no tiene sentido insistir
 }
 
 # Errores que significan "la ventana aun no abre", se reintenta hasta que abra
