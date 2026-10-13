@@ -35,6 +35,10 @@ adelanto_seg: 2
 rafaga_seg: 120
 intervalo_seg: 0.5
 
+# Al cazar cupos liberados, deja de buscar estos minutos antes de que empiece
+# la clase: un cupo que aparece mas tarde no alcanzas a usarlo y te penalizan.
+margen_caza_min: 10
+
 # Aviso por correo. Usa Gmail: necesitas una CONTRASENA DE APLICACION
 # (myaccount.google.com -> Seguridad -> Verificacion en 2 pasos ->
 # Contrasenas de aplicaciones) y la guardas en .env como SMTP_PASS.

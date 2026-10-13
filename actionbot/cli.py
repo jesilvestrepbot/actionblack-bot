@@ -337,8 +337,9 @@ def cmd_cazar(args) -> None:
         hasta = args.hasta or "23:59"
         descr = f"{clase} {desde}-{hasta}"
 
-    log.info("Cazando %s para %s, sede %s. Reviso cada %g min",
-             descr, args.fecha, branch["name"], args.intervalo_min)
+    margen = cfg.margen_caza_min if args.margen_min is None else args.margen_min
+    log.info("Cazando %s para %s, sede %s. Reviso cada %g min, hasta %g min antes de la clase",
+             descr, args.fecha, branch["name"], args.intervalo_min, margen)
 
     def candidatos(acts: list[dict]) -> list[dict]:
         """Clases objetivo del dia, en orden de preferencia."""
@@ -379,9 +380,13 @@ def cmd_cazar(args) -> None:
             if not objetivos:
                 log.warning("No hay clases objetivo (%s) en %s, nada que cazar", descr, args.fecha)
                 return
-            futuras = [a for a in objetivos if scheduler.parse_start(a) > datetime.now(tz)]
+            # Solo sirve un cupo si queda tiempo para llegar al gimnasio: se deja
+            # de cazar margen_caza_min minutos antes del inicio de cada clase.
+            limite = datetime.now(tz) + timedelta(minutes=margen)
+            futuras = [a for a in objetivos if scheduler.parse_start(a) > limite]
             if not futuras:
-                log.warning("Ya pasaron todas las clases objetivo de %s, termino sin conseguir cupo", args.fecha)
+                log.warning("Faltan menos de %g min para las clases objetivo de %s (o ya pasaron): "
+                            "termino sin reservar, no alcanzarias a llegar", margen, args.fecha)
                 avisar(cfg, f"No se consiguio clase para {args.fecha}, ya pasaron todas")
                 return
 
@@ -507,7 +512,7 @@ def cmd_sesion(args) -> None:
         inicio_clase = scheduler.parse_start(principal)
         log.info("La apertura de %s ya paso; cazo cupo hasta %g min o hasta que empiece la clase",
                  fecha, args.max_espera_min)
-        while ganada is None and time.monotonic() < fin and datetime.now(timezone.utc) < inicio_clase - timedelta(minutes=2):
+        while ganada is None and time.monotonic() < fin and datetime.now(timezone.utc) < inicio_clase - timedelta(minutes=cfg.margen_caza_min):
             acts2 = api.get_calendar(session, branch, fecha)
             for c in cands:
                 a2 = next((x for x in acts2 if scheduler.clave(x) == scheduler.clave(c)), None)
@@ -714,6 +719,8 @@ def main(argv=None) -> None:
     z.add_argument("--hasta", help="Hora maxima de inicio, HH:MM (modo --clase)")
     z.add_argument("--intervalo-min", type=float, default=5.0, dest="intervalo_min",
                    help="Cada cuantos minutos revisar si se libero cupo (por defecto 5)")
+    z.add_argument("--margen-min", type=float, default=None, dest="margen_min",
+                   help="Deja de cazar estos minutos antes de la clase (por defecto margen_caza_min del config)")
     z.add_argument("--permitir-otra", action="store_true", dest="permitir_otra",
                    help="Caza aunque ya tengas otra clase ese dia (luego cancelas la que sobre)")
     z.set_defaults(fn=cmd_cazar)
