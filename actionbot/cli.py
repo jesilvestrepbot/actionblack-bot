@@ -679,6 +679,59 @@ def cmd_vigilar(args) -> None:
             time.sleep(60)
 
 
+TAREA_WINDOWS = "ActionBot-semanal"
+DIAS_PS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def disparos_del_plan(cfg: Config, anticipo_min: int = 40) -> list[tuple[int, str]]:
+    """(dia de la semana, HH:MM) en que debe despertar la sesion: la apertura
+    de cada clase del plan (apertura_horas antes) menos anticipo_min."""
+    base = datetime(2024, 1, 1)  # lunes
+    salida = set()
+    for wd, ops in cfg.plan.por_dia.items():
+        for o in ops:
+            h, m = map(int, o.hora.split(":"))
+            clase = base + timedelta(days=wd, hours=h, minutes=m)
+            disparo = clase - timedelta(hours=cfg.apertura_horas, minutes=anticipo_min)
+            salida.add((disparo.weekday(), disparo.strftime("%H:%M")))
+    return sorted(salida)
+
+
+def cmd_programar(args) -> None:
+    """Crea (o actualiza) la tarea de Windows que reserva el plan semanal."""
+    cfg = cargar(args.config)
+    disparos = disparos_del_plan(cfg)
+    if not disparos:
+        sys.exit("El plan_semanal de config.yaml esta vacio")
+    for wd, hhmm in disparos:
+        print(f"  {DIAS_NOMBRES[wd]:10} {hhmm}")
+    if args.ver:
+        print("(solo vista previa, no se creo nada)")
+        return
+    if sys.platform != "win32":
+        sys.exit("programar solo funciona en Windows; en Linux usa systemd o cron (DEPLOY.md)")
+    import base64
+    import subprocess
+    repo = Path(__file__).resolve().parent.parent
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    if not pythonw.exists():
+        pythonw = Path(sys.executable)
+    triggers = ",".join(f"(New-ScheduledTaskTrigger -Weekly -DaysOfWeek {DIAS_PS[wd]} -At '{hhmm}')"
+                        for wd, hhmm in disparos)
+    ps = f"""
+$a = New-ScheduledTaskAction -Execute '{pythonw}' -Argument '-m actionbot sesion --max-espera-min 90' -WorkingDirectory '{repo}'
+$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::FromHours(3))
+Register-ScheduledTask -TaskName '{TAREA_WINDOWS}' -Action $a -Trigger @({triggers}) -Settings $s -Description 'Reservas Action Black segun config.yaml' -Force | Out-Null
+(Get-ScheduledTaskInfo -TaskName '{TAREA_WINDOWS}').NextRunTime
+"""
+    enc = base64.b64encode(ps.encode("utf-16-le")).decode()
+    r = subprocess.run(["powershell", "-NoProfile", "-EncodedCommand", enc], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("No pude crear la tarea: " + r.stderr)
+    print(f"Listo: tarea '{TAREA_WINDOWS}' creada. Proxima ejecucion: {r.stdout.strip()}")
+    print("Deja el computador encendido y sin suspender a esas horas.")
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="actionbot", description="Bot de reservas para clases de Action Black")
     p.add_argument("--config", default="config.yaml", help="Ruta del config.yaml (por defecto el del directorio actual)")
@@ -729,6 +782,9 @@ def main(argv=None) -> None:
 
     sub.add_parser("reservas", help="Lista tus reservas vigentes").set_defaults(fn=cmd_reservas)
     sub.add_parser("login-test", help="Prueba las credenciales del .env").set_defaults(fn=cmd_login_test)
+    g = sub.add_parser("programar", help="Crea la tarea de Windows que reserva tu plan semanal")
+    g.add_argument("--ver", action="store_true", help="Solo muestra los disparos, no crea nada")
+    g.set_defaults(fn=cmd_programar)
     sub.add_parser("probar-correo", help="Envia un correo de prueba con la config actual").set_defaults(fn=cmd_probar_correo)
 
     args = p.parse_args(argv)
