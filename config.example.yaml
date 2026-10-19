@@ -1,3 +1,4 @@
+# Copia este archivo como config.yaml y ajustalo a tu sede y horario.
 # Sede tal como aparece en: python -m actionbot sedes
 sede: PepeSierra
 
@@ -39,10 +40,10 @@ intervalo_seg: 0.5
 # la clase: un cupo que aparece mas tarde no alcanzas a usarlo y te penalizan.
 margen_caza_min: 10
 
-# Aviso por correo. Usa Gmail: necesitas una CONTRASENA DE APLICACION
-# (myaccount.google.com -> Seguridad -> Verificacion en 2 pasos ->
-# Contrasenas de aplicaciones) y la guardas en .env como SMTP_PASS.
-notificar_email: jesilvestrep@gmail.com
+# Aviso por correo (opcional). Usa Gmail: necesitas una CONTRASENA DE
+# APLICACION (myaccount.google.com -> Seguridad -> Verificacion en 2 pasos ->
+# Contrasenas de aplicaciones) y la guardas en .env como GMAIL_APP_PASSWORD.
+# notificar_email: tu_correo@gmail.com
 
 # Opcional: webhook (ntfy.sh, etc.)
 # notificar_url: https://ntfy.sh/mi-topic-secreto

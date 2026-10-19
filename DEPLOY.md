@@ -1,25 +1,26 @@
-# Despliegue en una VPS (openclaw)
+# Despliegue en un servidor (VPS)
 
 En una VPS el bot no depende de que tu PC este despierto: el servidor esta
 siempre encendido, asi que nunca pierde una apertura. Hay dos modelos, elige
 segun lo que tenga la VPS. Los dos son validos.
 
-- **Despertar, reservar y cerrar** (recomendado, es lo que pediste): una tarea
-  (systemd timer o cron) lanza `sesion` cada dia cerca de la apertura; reserva
-  el proximo dia y el proceso termina. Nada corriendo el resto del dia.
+- **Despertar, reservar y cerrar**: systemd timer o cron lanzan `sesion` cada
+  30 minutos. Si la proxima apertura del plan esta a menos de 40 minutos, espera
+  y dispara; si no, termina en segundos. Sirve para cualquier horario.
 - **Demonio siempre vivo**: un proceso `vigilar` que corre 24/7, duerme entre
   aperturas y se reinicia solo. Mas simple en Docker.
 
 Nota de zona horaria: Colombia no tiene horario de verano, asi que
-`America/Bogota` es UTC-5 fijo. `05:45` Bogota = `10:45` UTC siempre. Los
-archivos ya fijan `America/Bogota` de forma explicita.
+`America/Bogota` es UTC-5 fijo. Los archivos ya fijan `America/Bogota` de forma
+explicita, sin depender de la hora del servidor.
 
 ## Preparacion (cualquier opcion)
 
 ```bash
 git clone <repo> /opt/actionbot && cd /opt/actionbot
-cp .env.example .env      # edita ACTION_EMAIL y ACTION_PASSWORD
-# revisa config.yaml (sede, plan, franjas)
+cp .env.example .env              # ACTION_EMAIL y ACTION_PASSWORD
+cp config.example.yaml config.yaml # tu sede y tu plan_semanal
+chmod 600 .env
 ```
 
 El registro de reservas vive en `logs/bot_reservas.json`. Debe persistir entre
@@ -64,11 +65,11 @@ crontab deploy/crontab.example      # ajusta la ruta si no es /opt/actionbot
 ## Opcion D: Docker pero despertar-reservar-cerrar
 
 Si en la VPS solo hay Docker pero quieres el modelo que se cierra, deja que el
-cron del host lance un contenedor efimero cada dia:
+cron del host lance un contenedor efimero cada 30 minutos:
 
 ```cron
 CRON_TZ=America/Bogota
-45 5 * * * cd /opt/actionbot && docker compose run --rm actionbot python -m actionbot sesion --max-espera-min 200 >> logs/cron.log 2>&1
+*/30 * * * * cd /opt/actionbot && flock -n /tmp/actionbot.lock docker compose run --rm actionbot python -m actionbot sesion --max-espera-min 40 >> logs/cron.log 2>&1
 ```
 
 ## Verificacion y operacion
@@ -84,3 +85,5 @@ CRON_TZ=America/Bogota
 - `.env` con tus credenciales nunca se sube a git (esta en `.gitignore` y
   `.dockerignore`). En la VPS, restringe permisos: `chmod 600 .env`.
 - El bot reserva solo con tu cuenta, en tu sede, las clases de tu `config.yaml`.
+- Usa **una sola** forma de correrlo a la vez (PC o servidor, no ambos): dos
+  copias del bot reservarian lo mismo dos veces.

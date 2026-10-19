@@ -3,3 +3,5 @@
 __pycache__/
 *.pyc
 logs/
+# Config personal (sede, horario, correo): se versiona config.example.yaml
+config.yaml

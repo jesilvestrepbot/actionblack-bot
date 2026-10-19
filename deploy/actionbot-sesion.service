@@ -13,6 +13,6 @@ User=actionbot
 WorkingDirectory=/opt/actionbot
 Environment=TZ=America/Bogota
 EnvironmentFile=/opt/actionbot/.env
-ExecStart=/opt/actionbot/.venv/bin/python -m actionbot sesion --max-espera-min 200
-# La sesion puede esperar hasta la apertura (hasta ~2.5 h el fin de semana).
-TimeoutStartSec=4h
+ExecStart=/opt/actionbot/.venv/bin/python -m actionbot sesion --max-espera-min 40
+# Espera como maximo ~40 min a la apertura mas la rafaga.
+TimeoutStartSec=90min

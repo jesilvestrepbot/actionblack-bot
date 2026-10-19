@@ -132,6 +132,7 @@ def rafaga_reserva(session: requests.Session, token: str, activity: dict, branch
     fin = time.monotonic() + ventana
     intentos = 0
     ultimo: Exception | None = None
+    hubo_corte = False
     while time.monotonic() < fin:
         intentos += 1
         try:
@@ -141,6 +142,13 @@ def rafaga_reserva(session: requests.Session, token: str, activity: dict, branch
             return {"ok": True, "intentos": intentos, "respuesta": res}
         except api.ApiError as e:
             ultimo = e
+            if e.code == "ACTIVITIES_OVERLAPPING" and hubo_corte:
+                # Un POST anterior se cayo por red pero el servidor si lo
+                # proceso: la "clase que se cruza" es esta misma reserva.
+                # Darla por fallida haria que el bot reserve el fallback y
+                # quedarian dos clases.
+                log.warning("OVERLAPPING despues de un corte de red: la reserva anterior si entro")
+                return {"ok": True, "intentos": intentos, "respuesta": None, "probable": True}
             if e.code in api.STOP_CODES:
                 return {"ok": False, "intentos": intentos, "error": e, "definitivo": True}
             if e.code in api.RETRY_EARLY_CODES:
@@ -150,6 +158,7 @@ def rafaga_reserva(session: requests.Session, token: str, activity: dict, branch
                 log.debug("Intento %s rechazado: %s", intentos, e)
         except requests.RequestException as e:
             ultimo = e
+            hubo_corte = True
             log.debug("Intento %s con error de red: %s", intentos, e)
         time.sleep(cfg.intervalo_seg)
     return {"ok": False, "intentos": intentos, "error": ultimo, "definitivo": False}

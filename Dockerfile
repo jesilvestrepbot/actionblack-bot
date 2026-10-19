@@ -17,12 +17,11 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY actionbot ./actionbot
-COPY config.yaml ./config.yaml
+# config por defecto; docker-compose monta tu config.yaml encima
+COPY config.example.yaml ./config.yaml
 
 # logs/ (con bot_reservas.json) se monta como volumen para que persista.
 RUN mkdir -p /app/logs
 
-# Por defecto: demonio siempre vivo. En una VPS es simple y robusto.
-# Para el modelo "despertar, reservar y cerrar" usa cron o systemd
-# lanzando: python -m actionbot sesion --max-espera-min 200  (ver DEPLOY.md)
+# Demonio siempre vivo: calcula cada apertura del plan y dispara a tiempo.
 CMD ["python", "-m", "actionbot", "vigilar"]

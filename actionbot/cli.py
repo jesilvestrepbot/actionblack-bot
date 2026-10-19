@@ -263,7 +263,9 @@ def ejecutar_reserva(session: requests.Session, token: str, activity: dict, bran
     if codigo == "USER_PENALIZED_ERROR":
         avisar(cfg, f"No se pudo reservar {nombre}: la cuenta sigue penalizada despues de los 5 min")
     elif codigo == "NO_AVAILABLE_SLOTS":
-        avisar(cfg, f"No se pudo reservar {nombre}: la clase se lleno (la sancion de 5 min dejo pasar los cupos)")
+        avisar(cfg, f"No se pudo reservar {nombre}: la clase se lleno")
+    else:
+        avisar(cfg, f"No se pudo reservar {nombre}: {err}")
     return False
 
 
@@ -291,6 +293,8 @@ def cmd_reservar(args) -> None:
         sys.exit("No encontre esa clase. Revisa fecha (YYYY-MM-DD), hora (HH:MM) y nombre con: python -m actionbot calendario")
     if a.get("status_name") not in ("Available", "Full"):
         sys.exit(f"La clase {_nombre(a)} esta en estado {a.get('status_name')}, no se puede reservar")
+    if scheduler.parse_start(a) <= datetime.now(timezone.utc) + timedelta(minutes=cfg.margen_caza_min):
+        sys.exit(f"La clase {_nombre(a)} empieza en menos de {cfg.margen_caza_min:g} min: no alcanzarias a llegar, no la reservo")
     log.info("Calendario consultado en %.1f s", time.monotonic() - t1)
     t2 = time.monotonic()
     token, _ = api.login(session, cfg.email, cfg.password, branch)
@@ -300,8 +304,6 @@ def cmd_reservar(args) -> None:
     log.info("Tiempo total del comando: %.1f s", time.monotonic() - t0)
     if ok:
         registrar_bot_reserva(a["start_time"][:10], a)
-    else:
-        avisar(cfg, f"Reserva FALLIDA: {_nombre(a)}")
     sys.exit(0 if ok else 1)
 
 
@@ -387,7 +389,7 @@ def cmd_cazar(args) -> None:
             if not futuras:
                 log.warning("Faltan menos de %g min para las clases objetivo de %s (o ya pasaron): "
                             "termino sin reservar, no alcanzarias a llegar", margen, args.fecha)
-                avisar(cfg, f"No se consiguio clase para {args.fecha}, ya pasaron todas")
+                avisar(cfg, f"No se consiguio cupo para {args.fecha}: se acabo el tiempo de busqueda")
                 return
 
             # Cobertura del dia: NO nos fiamos del contador total_items, su
@@ -547,8 +549,7 @@ def secuencia_apertura(session: requests.Session, token: str, branch: dict, cfg:
         log.info("Fallback: %s", _nombre(c))
         if ejecutar_reserva(session, token, c, branch, cfg, esperar_apertura=True, ventana_seg=45):
             return c
-    log.warning("El %s no se logro ninguna clase en la apertura, pasa al rescate", fecha)
-    avisar(cfg, f"Apertura fallida el {fecha}, el bot queda buscando cupos liberados")
+    log.warning("El %s no se logro ninguna clase en la apertura", fecha)
     return None
 
 
@@ -557,10 +558,11 @@ def cmd_vigilar(args) -> None:
     _requiere_credenciales(cfg)
     session = api.new_session()
     branch = _branch(session, cfg)
-    log.info("Vigilando %s. Prioridad %s, franja %s a %s, dias %s. Rescate cada %g min: %s",
-             branch["name"], " > ".join(cfg.plan.prioridad), cfg.plan.entre[0], cfg.plan.entre[1],
-             ",".join(DIAS_NOMBRES[d][:3] for d in cfg.plan.dias),
-             cfg.rescate.intervalo_min, "activo" if cfg.rescate.activo else "apagado")
+    plan_txt = ", ".join(f"{DIAS_NOMBRES[wd][:3]} {'/'.join(o.clase + ' ' + o.hora for o in ops)}"
+                         for wd, ops in sorted(cfg.plan.por_dia.items()))
+    log.info("Vigilando %s. Plan: %s. Rescate cada %g min: %s",
+             branch["name"], plan_txt, cfg.rescate.intervalo_min,
+             "activo" if cfg.rescate.activo else "apagado")
 
     token: str | None = None
     aperturas_hechas: set[str] = set()
@@ -596,7 +598,7 @@ def cmd_vigilar(args) -> None:
             rescates = []             # (fecha, cands)
             for fecha in sorted(por_fecha):
                 cands = [c for c in por_fecha[fecha]
-                         if scheduler.parse_start(c) > ahora + timedelta(minutes=2)]
+                         if scheduler.parse_start(c) > ahora + timedelta(minutes=cfg.margen_caza_min)]
                 if not cands:
                     continue
 
