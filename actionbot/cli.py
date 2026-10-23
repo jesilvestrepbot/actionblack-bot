@@ -322,15 +322,26 @@ def cmd_cazar(args) -> None:
 
     # Dos modos: objetivos exactos (CLASE:HH:MM, en orden de preferencia) o
     # una clase en una franja horaria.
-    objetivos_spec: list[tuple[str, str]] | None = None
+    # Cada objetivo puede ser de otra sede: "Sede/CLASE:HH:MM". Sin sede, la del config.
+    objetivos_spec: list[tuple[str, str, str]] | None = None
+    sedes: dict[str, dict] = {cfg.sede: branch}
     if getattr(args, "objetivo", None):
         objetivos_spec = []
         for spec in args.objetivo:
+            sede_obj = cfg.sede
+            if "/" in spec:
+                sede_obj, spec = (x.strip() for x in spec.split("/", 1))
             partes = spec.split(":")
             if len(partes) < 3 or not partes[1].isdigit() or not partes[2].isdigit():
-                sys.exit(f"--objetivo invalido: {spec}. Usa CLASE:HH:MM, ejemplo TONIC:08:15")
-            objetivos_spec.append((partes[0].strip().upper(), f"{int(partes[1]):02d}:{int(partes[2]):02d}"))
-        descr = " > ".join(f"{c} {h}" for c, h in objetivos_spec)
+                sys.exit(f"--objetivo invalido: {spec}. Usa [Sede/]CLASE:HH:MM, ejemplo TONIC:08:15")
+            if sede_obj not in sedes:
+                b = api.find_branch(session, sede_obj)
+                if not b:
+                    sys.exit(f"Sede no encontrada: {sede_obj}. Mira los nombres con: python -m actionbot sedes")
+                sedes[sede_obj] = b
+            objetivos_spec.append((sede_obj, partes[0].strip().upper(), f"{int(partes[1]):02d}:{int(partes[2]):02d}"))
+        varias = len({s for s, _, _ in objetivos_spec}) > 1 or objetivos_spec[0][0] != cfg.sede
+        descr = " > ".join(f"{c} {h}" + (f" ({s})" if varias else "") for s, c, h in objetivos_spec)
     else:
         if not args.clase:
             sys.exit("Falta --clase (o usa --objetivo CLASE:HH:MM, repetible)")
@@ -343,20 +354,21 @@ def cmd_cazar(args) -> None:
     log.info("Cazando %s para %s, sede %s. Reviso cada %g min, hasta %g min antes de la clase",
              descr, args.fecha, branch["name"], args.intervalo_min, margen)
 
-    def candidatos(acts: list[dict]) -> list[dict]:
-        """Clases objetivo del dia, en orden de preferencia."""
+    def candidatos(acts_por_sede: dict[str, list[dict]]) -> list[dict]:
+        """Clases objetivo del dia, en orden de preferencia. Cada una lleva la
+        sede en "_sede" para reservar con el token de esa sede."""
         if objetivos_spec is not None:
             orden: list[tuple[int, dict]] = []
-            for pri, (cl, hr) in enumerate(objetivos_spec):
-                for a in acts:
+            for pri, (sd, cl, hr) in enumerate(objetivos_spec):
+                for a in acts_por_sede.get(sd, []):
                     if (a["start_time"][:10] == args.fecha
                             and a["activity_name"].strip().upper() == cl
                             and a["start_time"][11:16] == hr
                             and a.get("status_name") != "Canceled"):
-                        orden.append((pri, a))
+                        orden.append((pri, dict(a, _sede=sd)))
             orden.sort(key=lambda t: t[0])
             return [a for _, a in orden]
-        objs = [a for a in acts
+        objs = [dict(a, _sede=cfg.sede) for a in acts_por_sede.get(cfg.sede, [])
                 if a["start_time"][:10] == args.fecha
                 and a["activity_name"].strip().upper() == clase
                 and desde <= a["start_time"][11:16] <= hasta
@@ -377,8 +389,8 @@ def cmd_cazar(args) -> None:
 
     while True:
         try:
-            acts = api.get_calendar(session, branch, args.fecha)
-            objetivos = candidatos(acts)
+            usadas = {s for s, _, _ in objetivos_spec} if objetivos_spec is not None else {cfg.sede}
+            objetivos = candidatos({sd: api.get_calendar(session, sedes[sd], args.fecha) for sd in usadas})
             if not objetivos:
                 log.warning("No hay clases objetivo (%s) en %s, nada que cazar", descr, args.fecha)
                 return
@@ -427,9 +439,9 @@ def cmd_cazar(args) -> None:
                 obj = disponibles[0]
                 log.info("Cupo detectado en %s (%s/%s), disparo reserva",
                          _nombre(obj), obj["occupation"], obj["capacity"])
-                res = scheduler.rafaga_reserva(session, tok(), obj, branch, cfg, ventana_seg=20)
+                res = scheduler.rafaga_reserva(session, tok(), obj, sedes[obj["_sede"]], cfg, ventana_seg=20)
                 if res["ok"]:
-                    log.info("CAZADA: %s", _nombre(obj))
+                    log.info("CAZADA: %s en %s", _nombre(obj), obj["_sede"])
                     registrar_bot_reserva(args.fecha, obj)
                     avisar(cfg, f"Cazada {_nombre(obj)}")
                     return
@@ -439,7 +451,8 @@ def cmd_cazar(args) -> None:
                 else:
                     log.warning("No entro (%s), sigo cazando", err)
             else:
-                estados = ", ".join(f'{a["activity_name"]} {a["start_time"][11:16]} {a["occupation"]}/{a["capacity"]}' for a in futuras)
+                estados = ", ".join(f'{a["activity_name"]} {a["start_time"][11:16]}' + (f' {a["_sede"]}' if a["_sede"] != cfg.sede else "")
+                                    + f' {a["occupation"]}/{a["capacity"]}' for a in futuras)
                 log.info("Aun sin cupo (%s). Reviso en %g min", estados, args.intervalo_min)
             time.sleep(intervalo)
         except api.ApiError as e:
@@ -767,7 +780,7 @@ def main(argv=None) -> None:
     z = sub.add_parser("cazar", help="Caza enfocada de clases para una fecha (espera cupo liberado)")
     z.add_argument("--fecha", required=True, help="Fecha de la clase, YYYY-MM-DD")
     z.add_argument("--objetivo", action="append",
-                   help="Objetivo exacto CLASE:HH:MM, repetible en orden de preferencia. "
+                   help="Objetivo exacto [Sede/]CLASE:HH:MM, repetible en orden de preferencia. "
                         "Ej: --objetivo TONIC:08:15 --objetivo SAVAGE:07:15")
     z.add_argument("--clase", help="Modo simple: nombre de clase (usa --desde/--hasta). Alternativa a --objetivo")
     z.add_argument("--desde", help="Hora minima de inicio, HH:MM (modo --clase)")
